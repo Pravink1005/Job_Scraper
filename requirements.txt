@@ -1,0 +1,22 @@
+# ---- Shared / ML (from LinkedIn_Job_Pipeline) ----
+numpy
+pandas
+joblib
+scikit-learn==1.6.1
+beautifulsoup4
+
+# ---- LinkedIn scraper (from LinkedIn_Job_Pipeline) ----
+# Scrapling provides both a plain requests-style Fetcher and a
+# StealthyFetcher (headless-browser) mode used for anti-bot pages.
+scrapling
+
+# ---- Naukri scraper (from Naukri-scraper) ----
+# Naukri's search/detail pages are JS-rendered, so this project uses a real
+# controlled browser (Playwright) rather than requests/BeautifulSoup.
+# After installing requirements, also run: playwright install chromium
+playwright
+
+# ---- Unified pipeline additions ----
+python-dotenv     # optional .env configuration loading (config.py)
+pytest            # test suite
+pytest-mock       # convenient mocking in tests

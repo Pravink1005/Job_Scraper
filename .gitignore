@@ -1,0 +1,28 @@
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+
+# Environment variables and secrets
+.env
+
+# Data outputs, databases, and local tracking files
+csv_output/
+*.csv
+*.db
+*.json
+
+# Machine learning models and checkpoints
+#ml/models/
+
+# Debug logs or temporary debug folders
+naukri_debug/
+
+# OS-specific files
+.DS_Store
+Thumbs.db

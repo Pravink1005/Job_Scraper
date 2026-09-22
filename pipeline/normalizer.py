@@ -1,0 +1,2573 @@
+# ============================================================
+# pipeline/normalizer.py
+# ============================================================
+#
+# Unified Job Normalizer
+#
+# Sources:
+#   - LinkedIn
+#   - Naukri
+#
+# Responsibilities:
+#   1. Clean scraper output
+#   2. Normalize locations
+#   3. Normalize education
+#   4. Normalize experience
+#   5. Normalize common fields
+#   6. Create UnifiedJob objects
+#   7. Prevent location-field contamination
+#
+# Run:
+#
+#   python pipeline\normalizer.py
+#
+# OR:
+#
+#   python -m pipeline.normalizer
+#
+# ============================================================
+
+from __future__ import annotations
+
+import hashlib
+import re
+import sys
+
+from dataclasses import asdict
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Dict, Iterable, List, Optional, Tuple
+
+
+# ============================================================
+# PROJECT IMPORT
+# ============================================================
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from pipeline.schema import UnifiedJob
+
+
+# ============================================================
+# CONSTANTS
+# ============================================================
+
+NOT_SPECIFIED = "Not Specified"
+
+
+# ============================================================
+# INDIAN STATES / UNION TERRITORIES
+# ============================================================
+
+INDIAN_STATES = [
+    "Andhra Pradesh",
+    "Arunachal Pradesh",
+    "Assam",
+    "Bihar",
+    "Chhattisgarh",
+    "Goa",
+    "Gujarat",
+    "Haryana",
+    "Himachal Pradesh",
+    "Jharkhand",
+    "Karnataka",
+    "Kerala",
+    "Madhya Pradesh",
+    "Maharashtra",
+    "Manipur",
+    "Meghalaya",
+    "Mizoram",
+    "Nagaland",
+    "Odisha",
+    "Punjab",
+    "Rajasthan",
+    "Sikkim",
+    "Tamil Nadu",
+    "Telangana",
+    "Tripura",
+    "Uttar Pradesh",
+    "Uttarakhand",
+    "West Bengal",
+    "Delhi",
+    "Jammu and Kashmir",
+    "Ladakh",
+    "Puducherry",
+    "Chandigarh",
+    "Andaman and Nicobar Islands",
+    "Dadra and Nagar Haveli and Daman and Diu",
+    "Lakshadweep",
+]
+
+
+# ============================================================
+# GENERIC CLEANING
+# ============================================================
+
+def _clean(value: Any) -> str:
+    """
+    Convert any value to a normalized string.
+    """
+
+    if value is None:
+        return ""
+
+    text = str(value)
+
+    text = text.replace(
+        "\xa0",
+        " ",
+    )
+
+    text = re.sub(
+        r"\s+",
+        " ",
+        text,
+    )
+
+    return text.strip()
+
+
+def _first_value(
+    data: Dict[str, Any],
+    *keys: str,
+    default: str = "",
+) -> str:
+    """
+    Return the first non-empty value.
+    """
+
+    for key in keys:
+
+        value = data.get(key)
+
+        if value is None:
+            continue
+
+        value = _clean(value)
+
+        if value:
+            return value
+
+    return default
+
+
+def _not_specified(value: Any) -> str:
+    """
+    Convert empty values to Not Specified.
+    """
+
+    value = _clean(value)
+
+    if not value:
+        return NOT_SPECIFIED
+
+    return value
+
+
+# ============================================================
+# METADATA CLEANING
+# ============================================================
+
+def _clean_metadata_text(
+    value: Any,
+) -> str:
+    """
+    Remove scraper metadata accidentally attached to values.
+
+    Examples:
+
+        Mumbai 48 minutes ago
+        Pune 7 minutes ago
+        India 29 minutes ago 46 applicants
+        See who you know
+    """
+
+    text = _clean(value)
+
+    if not text:
+        return ""
+
+    # --------------------------------------------------------
+    # Relative posted time
+    # --------------------------------------------------------
+
+    text = re.sub(
+        r"\s+\d+\s*"
+        r"(?:minute|minutes|min|mins|"
+        r"hour|hours|day|days|week|weeks)"
+        r"\s+ago.*$",
+        "",
+        text,
+        flags=re.I,
+    )
+
+    # --------------------------------------------------------
+    # Applicant count
+    # --------------------------------------------------------
+
+    text = re.sub(
+        r"\s+\d+\+?\s+applicants?.*$",
+        "",
+        text,
+        flags=re.I,
+    )
+
+    # --------------------------------------------------------
+    # LinkedIn metadata
+    # --------------------------------------------------------
+
+    text = re.sub(
+        r"\s+See who.*$",
+        "",
+        text,
+        flags=re.I,
+    )
+
+    text = re.sub(
+        r"\s+has hired for this role.*$",
+        "",
+        text,
+        flags=re.I,
+    )
+
+    return _clean(text)
+
+
+# ============================================================
+# STATE MATCHING
+# ============================================================
+
+def _match_known_state(
+    value: str,
+) -> Optional[str]:
+    """
+    Match an exact value against a known Indian state.
+    """
+
+    value = _clean(value)
+
+    if not value:
+        return None
+
+    for state in sorted(
+        INDIAN_STATES,
+        key=len,
+        reverse=True,
+    ):
+
+        if value.lower() == state.lower():
+            return state
+
+    return None
+
+
+# ============================================================
+# INDIA SUFFIX NORMALIZATION
+# ============================================================
+
+def _normalize_india_suffix(
+    text: str,
+) -> str:
+    """
+    Repair malformed location strings.
+
+    Examples:
+
+        TelanganaIndia
+        KarnatakaIndia
+        Hyderabad, TelanganaIndia
+
+    into:
+
+        Telangana, India
+        Karnataka, India
+        Hyderabad, Telangana, India
+    """
+
+    text = _clean(text)
+
+    if not text:
+        return ""
+
+    # Already correct.
+    if re.search(
+        r",\s*India$",
+        text,
+        flags=re.I,
+    ):
+        return text
+
+    # --------------------------------------------------------
+    # Find known state immediately followed by India.
+    # --------------------------------------------------------
+
+    for state in sorted(
+        INDIAN_STATES,
+        key=len,
+        reverse=True,
+    ):
+
+        pattern = (
+            r"^(.*?)"
+            r"(?:,\s*)?"
+            + re.escape(state)
+            + r"India$"
+        )
+
+        match = re.match(
+            pattern,
+            text,
+            flags=re.I,
+        )
+
+        if not match:
+            continue
+
+        prefix = _clean(
+            match.group(1)
+        )
+
+        prefix = prefix.rstrip(
+            " ,"
+        ).strip()
+
+        if prefix:
+            return (
+                f"{prefix}, "
+                f"{state}, India"
+            )
+
+        return f"{state}, India"
+
+    return text
+
+
+# ============================================================
+# LOCATION SPLITTER
+# ============================================================
+
+def _split_location_parts(
+    location: str,
+) -> Tuple[str, str, str]:
+    """
+    Convert a complete location into:
+
+        city
+        state
+        country
+
+    Examples:
+
+        Bengaluru, Karnataka, India
+
+        ->
+        Bengaluru
+        Karnataka
+        India
+
+        Tamil Nadu, India
+
+        ->
+        Not Specified
+        Tamil Nadu
+        India
+    """
+
+    location = _clean_metadata_text(
+        location
+    )
+
+    if not location:
+
+        return (
+            NOT_SPECIFIED,
+            NOT_SPECIFIED,
+            NOT_SPECIFIED,
+        )
+
+    location = _normalize_india_suffix(
+        location
+    )
+
+    parts = [
+        _clean(part)
+        for part in location.split(",")
+        if _clean(part)
+    ]
+
+    if not parts:
+
+        return (
+            NOT_SPECIFIED,
+            NOT_SPECIFIED,
+            NOT_SPECIFIED,
+        )
+
+    # --------------------------------------------------------
+    # COUNTRY
+    # --------------------------------------------------------
+
+    country = NOT_SPECIFIED
+
+    if (
+        parts
+        and parts[-1].lower() == "india"
+    ):
+
+        country = "India"
+
+        parts = parts[:-1]
+
+    # --------------------------------------------------------
+    # STATE
+    # --------------------------------------------------------
+
+    state = NOT_SPECIFIED
+
+    if parts:
+
+        matched_state = _match_known_state(
+            parts[-1]
+        )
+
+        if matched_state:
+
+            state = matched_state
+
+            parts = parts[:-1]
+
+    # --------------------------------------------------------
+    # CITY
+    # --------------------------------------------------------
+
+    city = ", ".join(
+        parts
+    ).strip()
+
+    if not city:
+        city = NOT_SPECIFIED
+
+    return (
+        city,
+        state,
+        country,
+    )
+
+
+# ============================================================
+# SEPARATE LOCATION FIELD NORMALIZATION
+# ============================================================
+
+def _normalize_separate_location_fields(
+    city_value: Any,
+    state_value: Any,
+    country_value: Any,
+) -> Tuple[str, str, str]:
+    """
+    Normalize already-separated fields.
+
+    Important contamination cases:
+
+        country = "Haryana, India"
+
+    becomes:
+
+        state   = "Haryana"
+        country = "India"
+
+    Also:
+
+        state = "Telangana, India"
+
+    becomes:
+
+        state   = "Telangana"
+        country = "India"
+    """
+
+    city = _clean_metadata_text(
+        city_value
+    )
+
+    state = _clean_metadata_text(
+        state_value
+    )
+
+    country = _clean_metadata_text(
+        country_value
+    )
+
+    # --------------------------------------------------------
+    # COUNTRY FIELD
+    # --------------------------------------------------------
+
+    country_parts = [
+        _clean(part)
+        for part in country.split(",")
+        if _clean(part)
+    ]
+
+    if country_parts:
+
+        if (
+            country_parts[-1].lower()
+            == "india"
+        ):
+
+            if len(country_parts) >= 2:
+
+                possible_state = (
+                    _match_known_state(
+                        country_parts[-2]
+                    )
+                )
+
+                if possible_state:
+
+                    if (
+                        not state
+                        or state.lower()
+                        == NOT_SPECIFIED.lower()
+                    ):
+                        state = possible_state
+
+            country = "India"
+
+    # --------------------------------------------------------
+    # STATE FIELD
+    # --------------------------------------------------------
+
+    state = _normalize_india_suffix(
+        state
+    )
+
+    state_parts = [
+        _clean(part)
+        for part in state.split(",")
+        if _clean(part)
+    ]
+
+    if state_parts:
+
+        possible_state = _match_known_state(
+            state_parts[0]
+        )
+
+        if possible_state:
+
+            state = possible_state
+
+            if any(
+                part.lower() == "india"
+                for part in state_parts[1:]
+            ):
+
+                country = "India"
+
+    # --------------------------------------------------------
+    # COUNTRY CANONICALIZATION
+    # --------------------------------------------------------
+
+    if re.search(
+        r"\bindia\b",
+        country,
+        flags=re.I,
+    ):
+
+        country = "India"
+
+    # --------------------------------------------------------
+    # COUNTRY MUST NOT CONTAIN A STATE
+    # --------------------------------------------------------
+
+    if (
+        country
+        and country.lower() != "india"
+    ):
+
+        possible_state = _match_known_state(
+            country
+        )
+
+        if possible_state:
+
+            if (
+                not state
+                or state.lower()
+                == NOT_SPECIFIED.lower()
+            ):
+                state = possible_state
+
+            country = NOT_SPECIFIED
+
+    # --------------------------------------------------------
+    # FINAL VALUES
+    # --------------------------------------------------------
+
+    return (
+        _not_specified(city),
+        _not_specified(state),
+        _not_specified(country),
+    )
+
+
+# ============================================================
+# LINKEDIN METADATA CHECK
+# ============================================================
+
+def _looks_like_linkedin_metadata(
+    value: str,
+) -> bool:
+
+    value = _clean(value)
+
+    if not value:
+        return False
+
+    patterns = [
+
+        r"\b\d+\s*minutes?\s*ago\b",
+
+        r"\b\d+\s*hours?\s*ago\b",
+
+        r"\b\d+\s*days?\s*ago\b",
+
+        r"\b\d+\+?\s*applicants?\b",
+
+        r"\bsee who\b",
+
+        r"\bhas hired for this role\b",
+    ]
+
+    return any(
+        re.search(
+            pattern,
+            value,
+            flags=re.I,
+        )
+        for pattern in patterns
+    )
+
+
+# ============================================================
+# LINKEDIN LOCATION CLEANER
+# ============================================================
+
+def _clean_linkedin_location(
+    location: Any,
+) -> str:
+
+    location = _clean(location)
+
+    if not location:
+        return ""
+
+    location = re.sub(
+        r"\s+\d+\s*"
+        r"(?:minute|minutes|min|mins|"
+        r"hour|hours|day|days|week|weeks)"
+        r"\s+ago.*$",
+        "",
+        location,
+        flags=re.I,
+    )
+
+    location = re.sub(
+        r"\s+\d+\+?\s+applicants?.*$",
+        "",
+        location,
+        flags=re.I,
+    )
+
+    location = re.sub(
+        r"\s+See who.*$",
+        "",
+        location,
+        flags=re.I,
+    )
+
+    location = re.sub(
+        r"\s+has hired for this role.*$",
+        "",
+        location,
+        flags=re.I,
+    )
+
+    return _clean(location)
+
+
+# ============================================================
+# LINKEDIN LOCATION NORMALIZATION
+# ============================================================
+
+def _normalize_linkedin_location(
+    raw_job: Dict[str, Any],
+) -> Tuple[str, str, str]:
+
+    # --------------------------------------------------------
+    # PRIMARY LOCATION
+    # --------------------------------------------------------
+
+    location = _first_value(
+        raw_job,
+        "location",
+        "job_location",
+        "locations",
+        default="",
+    )
+
+    location = _clean_linkedin_location(
+        location
+    )
+
+    if location:
+
+        if not _looks_like_linkedin_metadata(
+            location
+        ):
+
+            return _split_location_parts(
+                location
+            )
+
+    # --------------------------------------------------------
+    # FALLBACK: SEPARATE FIELDS
+    # --------------------------------------------------------
+
+    city = _clean_metadata_text(
+        raw_job.get("city")
+    )
+
+    state = _clean_metadata_text(
+        raw_job.get("state")
+    )
+
+    country = _clean_metadata_text(
+        raw_job.get("country")
+    )
+
+    city, state, country = (
+        _normalize_separate_location_fields(
+            city,
+            state,
+            country,
+        )
+    )
+
+    # --------------------------------------------------------
+    # COMPANY PREFIX PROTECTION
+    # --------------------------------------------------------
+
+    company = _first_value(
+        raw_job,
+        "company",
+        "company_name",
+        default="",
+    )
+
+    if (
+        city != NOT_SPECIFIED
+        and company
+    ):
+
+        company_clean = re.sub(
+            r"[^A-Za-z0-9]+",
+            " ",
+            company,
+        ).strip().lower()
+
+        city_clean = re.sub(
+            r"[^A-Za-z0-9]+",
+            " ",
+            city,
+        ).strip()
+
+        if city_clean.lower().startswith(
+            company_clean + " "
+        ):
+
+            city = city_clean[
+                len(company_clean):
+            ].strip()
+
+    return (
+        _not_specified(city),
+        _not_specified(state),
+        _not_specified(country),
+    )
+
+
+# ============================================================
+# NAUKRI LOCATION NORMALIZATION
+# ============================================================
+
+def _normalize_naukri_location(
+    raw_job: Dict[str, Any],
+) -> Tuple[str, str, str]:
+
+    location = _first_value(
+        raw_job,
+        "location",
+        "job_location",
+        "locations",
+        default="",
+    )
+
+    location = _clean(
+        location
+    )
+
+    # --------------------------------------------------------
+    # If complete location is unavailable,
+    # reconstruct from separate fields.
+    # --------------------------------------------------------
+
+    if not location:
+
+        city, state, country = (
+            _normalize_separate_location_fields(
+                raw_job.get("city"),
+                raw_job.get("state"),
+                raw_job.get("country"),
+            )
+        )
+
+        if city != NOT_SPECIFIED:
+
+            location = city
+
+            if state != NOT_SPECIFIED:
+
+                location += (
+                    f", {state}"
+                )
+
+            if country != NOT_SPECIFIED:
+
+                location += (
+                    f", {country}"
+                )
+
+        elif state != NOT_SPECIFIED:
+
+            location = state
+
+            if country != NOT_SPECIFIED:
+
+                location += (
+                    f", {country}"
+                )
+
+        elif country != NOT_SPECIFIED:
+
+            location = country
+
+    location = _normalize_india_suffix(
+        location
+    )
+
+    if not location:
+
+        return (
+            NOT_SPECIFIED,
+            NOT_SPECIFIED,
+            NOT_SPECIFIED,
+        )
+
+    return _split_location_parts(
+        location
+    )
+
+
+# ============================================================
+# EDUCATION NORMALIZATION
+# ============================================================
+
+def _normalize_education(
+    value: Any,
+) -> str:
+    """
+    Normalize education values.
+
+    Examples:
+
+        B\\.?E\\., Bachelor(?:'s)?, degree
+
+    becomes:
+
+        B.E., Bachelor's, degree
+    """
+
+    text = _clean(value)
+
+    if not text:
+        return NOT_SPECIFIED
+
+    # --------------------------------------------------------
+    # Regex-style escaped optional dots
+    # --------------------------------------------------------
+
+    text = re.sub(
+        r"\\?\.\?",
+        ".",
+        text,
+    )
+
+    # --------------------------------------------------------
+    # Escaped dots
+    # --------------------------------------------------------
+
+    text = text.replace(
+        r"\.",
+        ".",
+    )
+
+    # --------------------------------------------------------
+    # Optional Bachelor's / Master's regex
+    # --------------------------------------------------------
+
+    text = re.sub(
+        r"Bachelor\s*\(\?:['’]s\)\?",
+        "Bachelor",
+        text,
+        flags=re.I,
+    )
+
+    text = re.sub(
+        r"Master\s*\(\?:['’]s\)\?",
+        "Master",
+        text,
+        flags=re.I,
+    )
+
+    # --------------------------------------------------------
+    # Remove remaining non-capturing groups
+    # --------------------------------------------------------
+
+    text = re.sub(
+        r"\(\?:([^)]*)\)",
+        r"\1",
+        text,
+    )
+
+    # --------------------------------------------------------
+    # Remove regex question marks
+    # --------------------------------------------------------
+
+    text = text.replace(
+        "?",
+        "",
+    )
+
+    # --------------------------------------------------------
+    # Normalize spaces around dots
+    # --------------------------------------------------------
+
+    text = re.sub(
+        r"\s*\.\s*",
+        ".",
+        text,
+    )
+
+    # --------------------------------------------------------
+    # Common degree abbreviations
+    # --------------------------------------------------------
+
+    degree_patterns = [
+
+        (
+            r"\bB\s*\.?\s*E\s*\.?\b",
+            "B.E.",
+        ),
+
+        (
+            r"\bM\s*\.?\s*E\s*\.?\b",
+            "M.E.",
+        ),
+
+        (
+            r"\bB\s*\.?\s*Tech\s*\.?\b",
+            "B.Tech",
+        ),
+
+        (
+            r"\bM\s*\.?\s*Tech\s*\.?\b",
+            "M.Tech",
+        ),
+
+        (
+            r"\bB\s*\.?\s*Sc\s*\.?\b",
+            "B.Sc.",
+        ),
+
+        (
+            r"\bM\s*\.?\s*Sc\s*\.?\b",
+            "M.Sc.",
+        ),
+
+        (
+            r"\bB\s*\.?\s*Com\s*\.?\b",
+            "B.Com.",
+        ),
+
+        (
+            r"\bM\s*\.?\s*Com\s*\.?\b",
+            "M.Com.",
+        ),
+
+        (
+            r"\bB\s*\.?\s*A\s*\.?\b",
+            "B.A.",
+        ),
+
+        (
+            r"\bM\s*\.?\s*A\s*\.?\b",
+            "M.A.",
+        ),
+
+        (
+            r"\bPh\s*\.?\s*D\s*\.?\b",
+            "Ph.D.",
+        ),
+    ]
+
+    for pattern, replacement in degree_patterns:
+
+        text = re.sub(
+            pattern,
+            replacement,
+            text,
+            flags=re.I,
+        )
+
+    # --------------------------------------------------------
+    # Bachelor's / Master's
+    # --------------------------------------------------------
+
+    text = re.sub(
+        r"\bBachelor(?:'s)?\b",
+        "Bachelor's",
+        text,
+        flags=re.I,
+    )
+
+    text = re.sub(
+        r"\bMaster(?:'s)?\b",
+        "Master's",
+        text,
+        flags=re.I,
+    )
+
+    # --------------------------------------------------------
+    # Cleanup punctuation
+    # --------------------------------------------------------
+
+    text = re.sub(
+        r"\.{2,}",
+        ".",
+        text,
+    )
+
+    text = re.sub(
+        r",\s*,+",
+        ",",
+        text,
+    )
+
+    text = re.sub(
+        r"\s+",
+        " ",
+        text,
+    )
+
+    return _clean(
+        text
+    ) or NOT_SPECIFIED
+
+
+# ============================================================
+# EXPERIENCE NORMALIZATION
+# ============================================================
+
+def _clean_experience(
+    value: Any,
+) -> str:
+    """
+    Normalize experience values.
+
+    Examples:
+
+        2 years
+        2+ years
+        2 - 5 years
+        2 to 5 years
+    """
+
+    text = _clean(value)
+
+    if not text:
+        return NOT_SPECIFIED
+
+    # --------------------------------------------------------
+    # Remove years / year
+    # --------------------------------------------------------
+
+    text = re.sub(
+        r"\byears?\b",
+        "",
+        text,
+        flags=re.I,
+    )
+
+    text = re.sub(
+        r"\byrs?\b",
+        "",
+        text,
+        flags=re.I,
+    )
+
+    text = _clean(
+        text
+    )
+
+    return text or NOT_SPECIFIED
+
+
+def _extract_experience_range(
+    raw_job: Dict[str, Any],
+) -> Tuple[str, str]:
+    """
+    Extract minimum and maximum experience.
+    """
+
+    minimum = _first_value(
+        raw_job,
+        "min_experience_years",
+        "min_experience",
+        "experience_min",
+        default="",
+    )
+
+    maximum = _first_value(
+        raw_job,
+        "max_experience_years",
+        "max_experience",
+        "experience_max",
+        default="",
+    )
+
+    # --------------------------------------------------------
+    # If both already exist
+    # --------------------------------------------------------
+
+    if minimum or maximum:
+
+        return (
+            _clean_experience(
+                minimum
+            ),
+            _clean_experience(
+                maximum
+            ),
+        )
+
+    # --------------------------------------------------------
+    # Try combined experience field
+    # --------------------------------------------------------
+
+    combined = _first_value(
+        raw_job,
+        "experience",
+        "experience_required",
+        default="",
+    )
+
+    if not combined:
+
+        return (
+            NOT_SPECIFIED,
+            NOT_SPECIFIED,
+        )
+
+    # Example:
+    #
+    # 2 - 5 years
+    # 2 to 5 years
+    # 2+ years
+    #
+
+    match = re.search(
+        r"(\d+(?:\.\d+)?)"
+        r"\s*(?:-|–|—|to)\s*"
+        r"(\d+(?:\.\d+)?)",
+        combined,
+        flags=re.I,
+    )
+
+    if match:
+
+        return (
+            match.group(1),
+            match.group(2),
+        )
+
+    match = re.search(
+        r"(\d+(?:\.\d+)?)\s*\+",
+        combined,
+        flags=re.I,
+    )
+
+    if match:
+
+        return (
+            match.group(1),
+            NOT_SPECIFIED,
+        )
+
+    match = re.search(
+        r"(\d+(?:\.\d+)?)",
+        combined,
+    )
+
+    if match:
+
+        return (
+            match.group(1),
+            NOT_SPECIFIED,
+        )
+
+    return (
+        NOT_SPECIFIED,
+        NOT_SPECIFIED,
+    )
+
+
+# ============================================================
+# POSTED TIME NORMALIZATION
+# ============================================================
+
+def _clean_posted_time(
+    value: Any,
+) -> str:
+
+    text = _clean(value)
+
+    if not text:
+        return NOT_SPECIFIED
+
+    return text
+
+
+# ============================================================
+# JOB ID FALLBACK
+# ============================================================
+
+def _fallback_job_id(
+    source: str,
+    raw_job: Dict[str, Any],
+) -> str:
+    """
+    Generate deterministic job ID when scraper did not provide one.
+    """
+
+    source_clean = _clean(
+        source
+    ).lower()
+
+    title = _first_value(
+        raw_job,
+        "title",
+        "job_title",
+        default="",
+    )
+
+    company = _first_value(
+        raw_job,
+        "company",
+        "company_name",
+        default="",
+    )
+
+    location = _first_value(
+        raw_job,
+        "location",
+        "job_location",
+        default="",
+    )
+
+    link = _first_value(
+        raw_job,
+        "link",
+        "url",
+        "job_url",
+        default="",
+    )
+
+    base = "|".join(
+        [
+            source_clean,
+            title.lower(),
+            company.lower(),
+            location.lower(),
+            link.lower(),
+        ]
+    )
+
+    digest = hashlib.sha256(
+        base.encode(
+            "utf-8"
+        )
+    ).hexdigest()[:16]
+
+    prefix = (
+        "linkedin"
+        if "linkedin" in source_clean
+        else
+        "naukri"
+        if "naukri" in source_clean
+        else
+        source_clean or "job"
+    )
+
+    return (
+        f"{prefix}_{digest}"
+    )
+
+
+# ============================================================
+# COMMON FIELD EXTRACTION
+# ============================================================
+
+def _extract_common_fields(
+    raw_job: Dict[str, Any],
+) -> Dict[str, str]:
+    """
+    Extract common fields before creating UnifiedJob.
+    """
+
+    source = _first_value(
+        raw_job,
+        "source",
+        default="Unknown",
+    )
+
+    title = _first_value(
+        raw_job,
+        "title",
+        "job_title",
+        "Job Title",
+        default=NOT_SPECIFIED,
+    )
+
+    company = _first_value(
+        raw_job,
+        "company",
+        "company_name",
+        "Company Name",
+        default=NOT_SPECIFIED,
+    )
+
+    category = _first_value(
+        raw_job,
+        "category",
+        "job_category",
+        default=NOT_SPECIFIED,
+    )
+
+    job_id = _first_value(
+        raw_job,
+        "job_id",
+        "id",
+        "jobId",
+        default="",
+    )
+
+    if not job_id:
+
+        job_id = _fallback_job_id(
+            source,
+            raw_job,
+        )
+
+    salary = _first_value(
+        raw_job,
+        "salary",
+        "salary_range",
+        default=NOT_SPECIFIED,
+    )
+
+    skills = _first_value(
+        raw_job,
+        "skills",
+        "skill",
+        "required_skills",
+        default=NOT_SPECIFIED,
+    )
+
+    degree_required = _normalize_education(
+        _first_value(
+            raw_job,
+            "degree_required",
+            "education",
+            "qualification",
+            "Education",
+            default="",
+        )
+    )
+
+    specialization_required = _first_value(
+        raw_job,
+        "specialization_required",
+        "specialization",
+        default=NOT_SPECIFIED,
+    )
+
+    posted_time = _clean_posted_time(
+        _first_value(
+            raw_job,
+            "posted_time",
+            "posted_date",
+            "Posted Date",
+            default="",
+        )
+    )
+
+    collected_at = _first_value(
+        raw_job,
+        "collected_at",
+        default="",
+    )
+
+    if not collected_at:
+
+        collected_at = (
+            datetime.now(
+                timezone.utc
+            ).isoformat()
+        )
+
+    link = _first_value(
+        raw_job,
+        "link",
+        "url",
+        "job_url",
+        "Job URL",
+        default=NOT_SPECIFIED,
+    )
+
+    full_description = _first_value(
+        raw_job,
+        "full_description",
+        "description",
+        "job_description",
+        "Job Description",
+        default=NOT_SPECIFIED,
+    )
+
+    minimum, maximum = (
+        _extract_experience_range(
+            raw_job
+        )
+    )
+
+    return {
+        "job_id": job_id,
+        "source": _not_specified(source),
+        "title": _not_specified(title),
+        "company": _not_specified(company),
+        "category": _not_specified(category),
+        "min_experience_years": minimum,
+        "max_experience_years": maximum,
+        "salary": _not_specified(salary),
+        "skills": _not_specified(skills),
+        "degree_required": degree_required,
+        "specialization_required": (
+            _not_specified(
+                specialization_required
+            )
+        ),
+        "posted_time": posted_time,
+        "collected_at": _not_specified(
+            collected_at
+        ),
+        "link": _not_specified(link),
+        "full_description": (
+            _not_specified(
+                full_description
+            )
+        ),
+    }
+
+
+# ============================================================
+# LINKEDIN NORMALIZER
+# ============================================================
+
+def normalize_linkedin_job(
+    raw_job: Dict[str, Any],
+) -> UnifiedJob:
+
+    fields = _extract_common_fields(
+        raw_job
+    )
+
+    city, state, country = (
+        _normalize_linkedin_location(
+            raw_job
+        )
+    )
+
+    return UnifiedJob(
+
+        job_id=fields[
+            "job_id"
+        ],
+
+        source="LinkedIn",
+
+        title=fields[
+            "title"
+        ],
+
+        company=fields[
+            "company"
+        ],
+
+        category=fields[
+            "category"
+        ],
+
+        city=city,
+
+        state=state,
+
+        country=country,
+
+        min_experience_years=fields[
+            "min_experience_years"
+        ],
+
+        max_experience_years=fields[
+            "max_experience_years"
+        ],
+
+        salary=fields[
+            "salary"
+        ],
+
+        skills=fields[
+            "skills"
+        ],
+
+        degree_required=fields[
+            "degree_required"
+        ],
+
+        specialization_required=fields[
+            "specialization_required"
+        ],
+
+        posted_time=fields[
+            "posted_time"
+        ],
+
+        collected_at=fields[
+            "collected_at"
+        ],
+
+        link=fields[
+            "link"
+        ],
+
+        full_description=fields[
+            "full_description"
+        ],
+    )
+
+
+# ============================================================
+# NAUKRI NORMALIZER
+# ============================================================
+
+def normalize_naukri_job(
+    raw_job: Dict[str, Any],
+) -> UnifiedJob:
+
+    fields = _extract_common_fields(
+        raw_job
+    )
+
+    city, state, country = (
+        _normalize_naukri_location(
+            raw_job
+        )
+    )
+
+    return UnifiedJob(
+
+        job_id=fields[
+            "job_id"
+        ],
+
+        source="Naukri",
+
+        title=fields[
+            "title"
+        ],
+
+        company=fields[
+            "company"
+        ],
+
+        category=fields[
+            "category"
+        ],
+
+        city=city,
+
+        state=state,
+
+        country=country,
+
+        min_experience_years=fields[
+            "min_experience_years"
+        ],
+
+        max_experience_years=fields[
+            "max_experience_years"
+        ],
+
+        salary=fields[
+            "salary"
+        ],
+
+        skills=fields[
+            "skills"
+        ],
+
+        degree_required=fields[
+            "degree_required"
+        ],
+
+        specialization_required=fields[
+            "specialization_required"
+        ],
+
+        posted_time=fields[
+            "posted_time"
+        ],
+
+        collected_at=fields[
+            "collected_at"
+        ],
+
+        link=fields[
+            "link"
+        ],
+
+        full_description=fields[
+            "full_description"
+        ],
+    )
+
+
+# ============================================================
+# GENERIC NORMALIZATION
+# ============================================================
+
+def normalize(
+    raw_job: Dict[str, Any],
+) -> UnifiedJob:
+
+    source = _first_value(
+        raw_job,
+        "source",
+        default="",
+    ).lower()
+
+    if "linkedin" in source:
+
+        return normalize_linkedin_job(
+            raw_job
+        )
+
+    if "naukri" in source:
+
+        return normalize_naukri_job(
+            raw_job
+        )
+
+    fields = _extract_common_fields(
+        raw_job
+    )
+
+    city, state, country = (
+        _normalize_linkedin_location(
+            raw_job
+        )
+    )
+
+    return UnifiedJob(
+
+        job_id=fields[
+            "job_id"
+        ],
+
+        source=fields[
+            "source"
+        ],
+
+        title=fields[
+            "title"
+        ],
+
+        company=fields[
+            "company"
+        ],
+
+        category=fields[
+            "category"
+        ],
+
+        city=city,
+
+        state=state,
+
+        country=country,
+
+        min_experience_years=fields[
+            "min_experience_years"
+        ],
+
+        max_experience_years=fields[
+            "max_experience_years"
+        ],
+
+        salary=fields[
+            "salary"
+        ],
+
+        skills=fields[
+            "skills"
+        ],
+
+        degree_required=fields[
+            "degree_required"
+        ],
+
+        specialization_required=fields[
+            "specialization_required"
+        ],
+
+        posted_time=fields[
+            "posted_time"
+        ],
+
+        collected_at=fields[
+            "collected_at"
+        ],
+
+        link=fields[
+            "link"
+        ],
+
+        full_description=fields[
+            "full_description"
+        ],
+    )
+
+
+# ============================================================
+# BATCH NORMALIZATION
+# ============================================================
+
+def normalize_batch(
+    raw_jobs: Iterable[Dict[str, Any]],
+) -> List[UnifiedJob]:
+
+    normalized = []
+
+    for raw_job in raw_jobs:
+
+        try:
+
+            normalized.append(
+                normalize(
+                    raw_job
+                )
+            )
+
+        except Exception as exc:
+
+            print(
+                "[NORMALIZER WARNING] "
+                f"Failed to normalize job: {exc}"
+            )
+
+    return normalized
+
+
+# ============================================================
+# CSV ROW
+# ============================================================
+
+def to_csv_row(
+    job: UnifiedJob,
+) -> Dict[str, Any]:
+
+    data = asdict(
+        job
+    )
+
+    return {
+        key: (
+            NOT_SPECIFIED
+            if value is None
+            or str(value).strip() == ""
+            else value
+        )
+        for key, value in data.items()
+    }
+
+
+# ============================================================
+# TEST ASSERTION
+# ============================================================
+
+def _assert_equal(
+    actual,
+    expected,
+    label: str,
+):
+
+    if actual != expected:
+
+        raise AssertionError(
+            f"{label}\n"
+            f"Expected: {expected}\n"
+            f"Actual  : {actual}"
+        )
+
+
+# ============================================================
+# LOCATION TESTS
+# ============================================================
+
+def _run_location_tests():
+
+    print()
+    print("-" * 70)
+    print("LOCATION TESTS")
+    print("-" * 70)
+
+    tests = [
+
+        (
+            "Bengaluru, Karnataka, India",
+            (
+                "Bengaluru",
+                "Karnataka",
+                "India",
+            ),
+        ),
+
+        (
+            "Hyderabad, Telangana, India",
+            (
+                "Hyderabad",
+                "Telangana",
+                "India",
+            ),
+        ),
+
+        (
+            "Kolkata, West Bengal, India",
+            (
+                "Kolkata",
+                "West Bengal",
+                "India",
+            ),
+        ),
+
+        (
+            "Tamil Nadu, India",
+            (
+                NOT_SPECIFIED,
+                "Tamil Nadu",
+                "India",
+            ),
+        ),
+
+        (
+            "Gujarat, India",
+            (
+                NOT_SPECIFIED,
+                "Gujarat",
+                "India",
+            ),
+        ),
+
+        (
+            "Delhi, India",
+            (
+                NOT_SPECIFIED,
+                "Delhi",
+                "India",
+            ),
+        ),
+
+        (
+            "Hyderabad, TelanganaIndia",
+            (
+                "Hyderabad",
+                "Telangana",
+                "India",
+            ),
+        ),
+
+        (
+            "TelanganaIndia",
+            (
+                NOT_SPECIFIED,
+                "Telangana",
+                "India",
+            ),
+        ),
+
+        (
+            "Mumbai Metropolitan Region 48 minutes ago",
+            (
+                "Mumbai Metropolitan Region",
+                NOT_SPECIFIED,
+                NOT_SPECIFIED,
+            ),
+        ),
+
+        (
+            "Apollo Global Management Inc. Mumbai Metropolitan Region",
+            (
+                "Apollo Global Management Inc. Mumbai Metropolitan Region",
+                NOT_SPECIFIED,
+                NOT_SPECIFIED,
+            ),
+        ),
+    ]
+
+    for raw, expected in tests:
+
+        actual = _split_location_parts(
+            raw
+        )
+
+        print(
+            f"LinkedIn | {raw!r} -> {actual}"
+        )
+
+        _assert_equal(
+            actual,
+            expected,
+            f"Location failed: {raw}",
+        )
+
+    print(
+        "[PASS] Location tests"
+    )
+
+
+# ============================================================
+# SEPARATE FIELD LOCATION TESTS
+# ============================================================
+
+def _run_separate_location_tests():
+
+    print()
+    print("-" * 70)
+    print("SEPARATE LOCATION FIELD TESTS")
+    print("-" * 70)
+
+    tests = [
+
+        (
+            (
+                "Not Specified",
+                "Not Specified",
+                "Haryana, India",
+            ),
+            (
+                "Not Specified",
+                "Haryana",
+                "India",
+            ),
+        ),
+
+        (
+            (
+                "Not Specified",
+                "Telangana, India",
+                "Not Specified",
+            ),
+            (
+                "Not Specified",
+                "Telangana",
+                "India",
+            ),
+        ),
+
+        (
+            (
+                "",
+                "",
+                "Karnataka, India",
+            ),
+            (
+                "Not Specified",
+                "Karnataka",
+                "India",
+            ),
+        ),
+
+        (
+            (
+                "Hyderabad",
+                "Telangana",
+                "India",
+            ),
+            (
+                "Hyderabad",
+                "Telangana",
+                "India",
+            ),
+        ),
+
+        (
+            (
+                "",
+                "Haryana",
+                "India",
+            ),
+            (
+                "Not Specified",
+                "Haryana",
+                "India",
+            ),
+        ),
+    ]
+
+    for raw, expected in tests:
+
+        actual = (
+            _normalize_separate_location_fields(
+                raw[0],
+                raw[1],
+                raw[2],
+            )
+        )
+
+        print(
+            f"{raw} -> {actual}"
+        )
+
+        _assert_equal(
+            actual,
+            expected,
+            f"Separate location failed: {raw}",
+        )
+
+    print(
+        "[PASS] Separate location field tests"
+    )
+
+
+# ============================================================
+# EDUCATION TESTS
+# ============================================================
+
+def _run_education_tests():
+
+    print()
+    print("-" * 70)
+    print("EDUCATION TESTS")
+    print("-" * 70)
+
+    tests = [
+
+        (
+            r"B\.?E\., Bachelor(?:'s)?, degree",
+            "B.E., Bachelor's, degree",
+        ),
+
+        (
+            r"Bachelor(?:'s)?, degree",
+            "Bachelor's, degree",
+        ),
+
+        (
+            r"B\.?E\.",
+            "B.E.",
+        ),
+
+        (
+            r"M\.?E\.",
+            "M.E.",
+        ),
+
+        (
+            r"B\.?Tech",
+            "B.Tech",
+        ),
+
+        (
+            r"M\.?Tech",
+            "M.Tech",
+        ),
+
+        (
+            r"B\.?Sc\.",
+            "B.Sc.",
+        ),
+
+        (
+            r"M\.?Sc\.",
+            "M.Sc.",
+        ),
+
+        (
+            r"B\.?Com\.",
+            "B.Com.",
+        ),
+
+        (
+            r"M\.?Com\.",
+            "M.Com.",
+        ),
+
+        (
+            r"B\.?A\.",
+            "B.A.",
+        ),
+
+        (
+            r"M\.?A\.",
+            "M.A.",
+        ),
+
+        (
+            "Bachelor",
+            "Bachelor's",
+        ),
+
+        (
+            "Bachelor's",
+            "Bachelor's",
+        ),
+
+        (
+            "Master",
+            "Master's",
+        ),
+
+        (
+            "Master's",
+            "Master's",
+        ),
+    ]
+
+    for raw, expected in tests:
+
+        actual = _normalize_education(
+            raw
+        )
+
+        print(
+            f"{raw!r:<50} -> {actual}"
+        )
+
+        _assert_equal(
+            actual,
+            expected,
+            f"Education failed: {raw}",
+        )
+
+    print(
+        "[PASS] Education tests"
+    )
+
+
+# ============================================================
+# FULL NORMALIZER TESTS
+# ============================================================
+
+def _run_full_tests():
+
+    print()
+    print("-" * 70)
+    print("FULL NORMALIZER TESTS")
+    print("-" * 70)
+
+    # --------------------------------------------------------
+    # LinkedIn standard
+    # --------------------------------------------------------
+
+    linkedin_job = {
+
+        "source": "LinkedIn",
+
+        "job_id": "test_linkedin_001",
+
+        "title": "Data Analyst",
+
+        "company": "Test Company",
+
+        "location":
+            "Hyderabad, Telangana, India",
+
+        "degree_required":
+            r"B\.?E\., Bachelor(?:'s)?, degree",
+
+        "min_experience_years":
+            "2",
+
+        "max_experience_years":
+            "5",
+    }
+
+    job = normalize_linkedin_job(
+        linkedin_job
+    )
+
+    print()
+    print("LinkedIn standard test:")
+
+    print(
+        f"  City    : {job.city}"
+    )
+
+    print(
+        f"  State   : {job.state}"
+    )
+
+    print(
+        f"  Country : {job.country}"
+    )
+
+    print(
+        f"  Degree  : {job.degree_required}"
+    )
+
+    print(
+        f"  Min Exp : {job.min_experience_years}"
+    )
+
+    print(
+        f"  Max Exp : {job.max_experience_years}"
+    )
+
+    _assert_equal(
+        (
+            job.city,
+            job.state,
+            job.country,
+        ),
+        (
+            "Hyderabad",
+            "Telangana",
+            "India",
+        ),
+        "LinkedIn standard location",
+    )
+
+    _assert_equal(
+        job.degree_required,
+        "B.E., Bachelor's, degree",
+        "LinkedIn education",
+    )
+
+    # --------------------------------------------------------
+    # LinkedIn state only
+    # --------------------------------------------------------
+
+    state_only = normalize_linkedin_job(
+        {
+            "source": "LinkedIn",
+            "title": "Data Analyst",
+            "company": "Test Company",
+            "location": "Tamil Nadu, India",
+        }
+    )
+
+    print()
+    print("LinkedIn state-only test:")
+
+    print(
+        f"  City    : {state_only.city}"
+    )
+
+    print(
+        f"  State   : {state_only.state}"
+    )
+
+    print(
+        f"  Country : {state_only.country}"
+    )
+
+    _assert_equal(
+        (
+            state_only.city,
+            state_only.state,
+            state_only.country,
+        ),
+        (
+            NOT_SPECIFIED,
+            "Tamil Nadu",
+            "India",
+        ),
+        "LinkedIn state-only location",
+    )
+
+    # --------------------------------------------------------
+    # LinkedIn malformed India suffix
+    # --------------------------------------------------------
+
+    malformed = normalize_linkedin_job(
+        {
+            "source": "LinkedIn",
+            "title": "Data Analyst",
+            "company": "Test Company",
+            "location":
+                "Hyderabad, TelanganaIndia",
+        }
+    )
+
+    print()
+    print("LinkedIn malformed India suffix:")
+
+    print(
+        f"  City    : {malformed.city}"
+    )
+
+    print(
+        f"  State   : {malformed.state}"
+    )
+
+    print(
+        f"  Country : {malformed.country}"
+    )
+
+    _assert_equal(
+        (
+            malformed.city,
+            malformed.state,
+            malformed.country,
+        ),
+        (
+            "Hyderabad",
+            "Telangana",
+            "India",
+        ),
+        "Malformed India suffix",
+    )
+
+    # --------------------------------------------------------
+    # LinkedIn separate polluted country
+    # --------------------------------------------------------
+
+    polluted_country = normalize_linkedin_job(
+        {
+            "source": "LinkedIn",
+            "title": "Data Analyst",
+            "company": "Test Company",
+            "city": "Not Specified",
+            "state": "Not Specified",
+            "country": "Haryana, India",
+        }
+    )
+
+    print()
+    print("LinkedIn polluted country test:")
+
+    print(
+        f"  City    : {polluted_country.city}"
+    )
+
+    print(
+        f"  State   : {polluted_country.state}"
+    )
+
+    print(
+        f"  Country : {polluted_country.country}"
+    )
+
+    _assert_equal(
+        (
+            polluted_country.city,
+            polluted_country.state,
+            polluted_country.country,
+        ),
+        (
+            NOT_SPECIFIED,
+            "Haryana",
+            "India",
+        ),
+        "Polluted country repair",
+    )
+
+    # --------------------------------------------------------
+    # Naukri standard
+    # --------------------------------------------------------
+
+    naukri_job = normalize_naukri_job(
+        {
+            "source": "Naukri",
+            "title": "Data Analyst",
+            "company": "Test Company",
+            "location":
+                "Gurugram, Haryana, India",
+            "degree_required":
+                r"B\.?E\., Bachelor(?:'s)?, degree",
+        }
+    )
+
+    print()
+    print("Naukri standard test:")
+
+    print(
+        f"  City    : {naukri_job.city}"
+    )
+
+    print(
+        f"  State   : {naukri_job.state}"
+    )
+
+    print(
+        f"  Country : {naukri_job.country}"
+    )
+
+    print(
+        f"  Degree  : {naukri_job.degree_required}"
+    )
+
+    _assert_equal(
+        (
+            naukri_job.city,
+            naukri_job.state,
+            naukri_job.country,
+        ),
+        (
+            "Gurugram",
+            "Haryana",
+            "India",
+        ),
+        "Naukri standard location",
+    )
+
+    _assert_equal(
+        naukri_job.degree_required,
+        "B.E., Bachelor's, degree",
+        "Naukri education",
+    )
+
+    # --------------------------------------------------------
+    # Naukri multi-location
+    # --------------------------------------------------------
+
+    naukri_multi = normalize_naukri_job(
+        {
+            "source": "Naukri",
+            "title": "Data Analyst",
+            "company": "Test Company",
+            "location":
+                "Hybrid - Hyderabad, Chennai, Bengaluru",
+        }
+    )
+
+    print()
+    print("Naukri multi-location test:")
+
+    print(
+        f"  City    : {naukri_multi.city}"
+    )
+
+    print(
+        f"  State   : {naukri_multi.state}"
+    )
+
+    print(
+        f"  Country : {naukri_multi.country}"
+    )
+
+    _assert_equal(
+        (
+            naukri_multi.city,
+            naukri_multi.state,
+            naukri_multi.country,
+        ),
+        (
+            "Hybrid - Hyderabad, Chennai, Bengaluru",
+            NOT_SPECIFIED,
+            NOT_SPECIFIED,
+        ),
+        "Naukri multi-location",
+    )
+
+    # --------------------------------------------------------
+    # Job ID fallback
+    # --------------------------------------------------------
+
+    fallback_job = normalize(
+        {
+            "source": "LinkedIn",
+            "title": "Data Analyst",
+            "company": "Test Company",
+            "location":
+                "Bengaluru, Karnataka, India",
+        }
+    )
+
+    print()
+    print("Job ID fallback test:")
+
+    print(
+        f"  Job ID: {fallback_job.job_id}"
+    )
+
+    _assert_equal(
+        bool(
+            fallback_job.job_id
+        ),
+        True,
+        "Fallback job ID",
+    )
+
+    print()
+    print(
+        "All full normalizer tests passed."
+    )
+
+
+# ============================================================
+# MAIN
+# ============================================================
+
+if __name__ == "__main__":
+
+    print("=" * 70)
+    print("NORMALIZER MODULE TEST")
+    print("=" * 70)
+
+    _run_location_tests()
+
+    _run_separate_location_tests()
+
+    _run_education_tests()
+
+    _run_full_tests()
+
+    print()
+    print("=" * 70)
+    print(
+        "NORMALIZER MODULE TEST COMPLETE"
+    )
+    print("=" * 70)
