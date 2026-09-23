@@ -2,13 +2,22 @@ import csv
 import sqlite3
 from pathlib import Path
 
+from config import OUTPUT_DIR
+
 
 # ============================================================
 # CONFIGURATION
+#
+# CSV_PATH / DB_PATH are derived from config.OUTPUT_DIR so that
+# this script always targets the same output directory as
+# main.py (respecting the PIPELINE_OUTPUT_DIR environment
+# variable / .env setting). Do not hardcode "csv_output" here
+# again — that previously caused this script to silently sync
+# the wrong files whenever PIPELINE_OUTPUT_DIR was customized.
 # ============================================================
 
-CSV_PATH = Path("csv_output/unified_jobs.csv")
-DB_PATH = Path("csv_output/jobs.db")
+CSV_PATH = OUTPUT_DIR / "unified_jobs.csv"
+DB_PATH = OUTPUT_DIR / "jobs.db"
 
 
 # ============================================================
