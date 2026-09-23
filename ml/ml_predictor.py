@@ -497,55 +497,553 @@ def extract_specialization_text(job_description):
     return " ".join(sentence.strip() for sentence in sentences if sentence.strip() and not degree_pattern.search(sentence))
 
 
-def detect_explicit_specialization(job_description):
-    if not job_description or not job_description.strip():
-        return []
+def detect_explicit_specialization(text: str):
+    """
+    Domain-aware specialization detection.
 
-    cleaned = extract_specialization_text(job_description).lower()
-    for phrase in GENERIC_AI_EXCLUDES:
-        cleaned = cleaned.replace(phrase, " ")
+    Priority:
+    1. Primary job role
+    2. Strong business/finance/domain signals
+    3. Strong technical specialization
+    4. Data Analyst only when the description clearly supports it
+    5. Otherwise None
+    """
 
-    if re.search(r"\blooking\s+for\s+(?:a\s+)?data\s+analyst\b", cleaned):
-        return ["Data Analyst"]
+    if not text:
+        return None
 
+    text_lower = str(text).lower()
+
+    # ============================================================
+    # 1. PRIMARY JOB ROLE
+    # ============================================================
+
+    # Data Scientist
+    if re.search(r"\bdata scientist\b", text_lower):
+        return "Data Science"
+
+    # Data Engineer
+    if re.search(r"\bdata engineer\b", text_lower):
+        return "Data Engineering"
+
+    # Software Engineer / Developer
     if re.search(
-        r"\b(?:python|java|software|backend|full[- ]stack)\s+developer\b|\bsoftware\s+engineer\b",
-        cleaned,
+        r"\b("
+        r"software engineer|software developer|"
+        r"application developer|backend developer|"
+        r"frontend developer|full[- ]stack developer|"
+        r"software development"
+        r")\b",
+        text_lower,
     ):
-        return ["Software Engineering"]
+        return "Software Engineering"
 
-    if re.search(r"\bdata\s+engineering\b|\bdata\s+engineer\b", cleaned):
-        return ["Data Engineering"]
-
-    if re.search(r"\bresearch\s+analyst\b", cleaned) and re.search(
-        r"\b(?:business\s+)?operations?\b|\bdata\s+analysis\b|\bdata\s+modeling\b",
-        cleaned,
-    ):
-        return ["Business Analytics"]
-
+    # Civil / Architecture / Structural
     if re.search(
-        r"\bdata\s+pipelines?\b|\b(?:PySpark|Spark\s+SQL)\b|\bdata\s+warehous(?:e|ing)\b|\bELT\b",
-        cleaned,
-        re.IGNORECASE,
+        r"\b("
+        r"civil engineer|civil engineering|"
+        r"architect|architecture|"
+        r"structural engineer|structural engineering"
+        r")\b",
+        text_lower,
     ):
-        return ["Data Engineering"]
+        return "Civil Engineering"
 
-    scores = []
-    for idx, (specialization, patterns) in enumerate(SPECIALIZATION_PATTERNS):
-        score = 0
-        for pattern in patterns:
-            if re.search(pattern, cleaned, re.IGNORECASE):
-                score += 1
-        if score > 0:
-            scores.append((specialization, score, idx))
+    # ============================================================
+    # 2. FINANCE DOMAIN
+    # ============================================================
 
-    if not scores:
-        return []
+    finance_signals = [
+        "credit risk",
+        "credit analytics",
+        "risk analytics",
+        "loan data",
+        "loan portfolio",
+        "loan analysis",
+        "delinquency",
+        "repayment",
+        "nbfc",
+        "fintech",
+        "stock broking",
+        "stock brokerage",
+        "brokerage",
+        "asset management",
+        "asset manager",
+        "amc",
+        "private equity",
+        "venture capital",
+        "investment",
+        "investments",
+        "investor",
+        "investors",
+        "valuation",
+        "valuation reporting",
+        "financial reporting",
+        "financial analysis",
+        "finance",
+        "fund reporting",
+        "lp reporting",
+        "portfolio management",
+        "portfolio monitoring",
+        "comparable company analysis",
+        "discounted cash flow",
+        "dcf",
+    ]
 
-    scores.sort(key=lambda item: (-item[1], item[2]))
-    return [specialization for specialization, _, _ in scores]
+    finance_score = sum(
+        1 for signal in finance_signals if signal in text_lower
+    )
 
+    # Strong finance/domain evidence
+    if finance_score >= 2:
+        return "Finance"
 
+    # Some highly specific finance terms are enough on their own
+    if re.search(
+        r"\b("
+        r"credit risk analyst|"
+        r"credit analyst|"
+        r"risk analyst|"
+        r"stock broker|"
+        r"stock broking|"
+        r"asset management|"
+        r"private equity|"
+        r"venture capital"
+        r")\b",
+        text_lower,
+    ):
+        return "Finance"
+
+    # ============================================================
+    # 3. BUSINESS ANALYTICS
+    # ============================================================
+
+    business_strong_signals = [
+        "business analyst",
+        "business analytics",
+        "business intelligence",
+        "business performance",
+        "business insights",
+        "commercial capabilities",
+        "product analytics",
+        "growth analytics",
+        "operations analytics",
+        "marketing analytics",
+        "strategic analytics",
+        "unit economics",
+    ]
+
+    business_score = sum(
+        1 for signal in business_strong_signals if signal in text_lower
+    )
+
+    if business_score >= 1:
+        return "Business Analytics"
+
+    # Additional supporting business signals
+    business_support_signals = [
+        "business planning",
+        "performance trackers",
+        "data-driven decision making",
+        "data driven decision making",
+        "forecasting",
+        "dashboard",
+        "dashboards",
+        "reporting",
+        "customer segments",
+        "business process improvement",
+    ]
+
+    business_support_score = sum(
+        1 for signal in business_support_signals if signal in text_lower
+    )
+
+    if business_support_score >= 3:
+        return "Business Analytics"
+
+    # ============================================================
+    # 4. DATA SCIENCE
+    # ============================================================
+
+    data_science_signals = [
+        "data science",
+        "machine learning",
+        "statistical modeling",
+        "statistical modelling",
+        "predictive modeling",
+        "predictive modelling",
+        "predictive analytics",
+        "classification",
+        "regression",
+        "clustering",
+        "forecasting model",
+        "anomaly detection",
+        "deep learning",
+        "model development",
+        "model validation",
+        "model deployment",
+    ]
+
+    data_science_score = sum(
+        1 for signal in data_science_signals if signal in text_lower
+    )
+
+    # Data Scientist already handled above.
+    # Require multiple signals to avoid classifying ordinary
+    # analytics jobs as Data Science.
+    if data_science_score >= 3:
+        return "Data Science"
+
+    # ============================================================
+    # 5. DATA ENGINEERING
+    # ============================================================
+
+    data_engineering_signals = [
+        "data engineering",
+        "data engineer",
+        "data pipeline",
+        "data pipelines",
+        "etl",
+        "data warehouse",
+        "data lake",
+        "data ingestion",
+        "data integration",
+        "data infrastructure",
+        "apache spark",
+        "spark",
+        "databricks",
+        "snowflake",
+        "airflow",
+        "dbt",
+    ]
+
+    data_engineering_score = sum(
+        1 for signal in data_engineering_signals if signal in text_lower
+    )
+
+    if data_engineering_score >= 3:
+        return "Data Engineering"
+
+    # ============================================================
+    # 6. SOFTWARE ENGINEERING
+    # ============================================================
+
+    software_signals = [
+        "software engineering",
+        "software development",
+        "application development",
+        "backend development",
+        "frontend development",
+        "full stack development",
+        "api development",
+        "api engineering",
+    ]
+
+    software_score = sum(
+        1 for signal in software_signals if signal in text_lower
+    )
+
+    if software_score >= 2:
+        return "Software Engineering"
+
+    # API Engineering should NOT become Civil Engineering.
+    if re.search(r"\bapi engineering\b", text_lower):
+        return "Software Engineering"
+
+    # ============================================================
+    # 7. DATA ANALYST
+    # ============================================================
+
+    # Do NOT classify every occurrence of "data analyst".
+    # Require either the job title or strong analyst-specific evidence.
+
+    analyst_title = re.search(
+        r"\bdata analyst\b",
+        text_lower,
+    )
+
+    analyst_signals = [
+        "sql",
+        "power bi",
+        "tableau",
+        "advanced excel",
+        "data visualization",
+        "business intelligence",
+        "reporting",
+        "dashboard",
+        "dashboards",
+    ]
+
+    analyst_support_score = sum(
+        1 for signal in analyst_signals if signal in text_lower
+    )
+
+    # Only return Data Analyst when:
+    # - there is a Data Analyst role AND supporting analytics tools/signals
+    # - OR several strong analyst signals exist.
+    if analyst_title and analyst_support_score >= 2:
+        return "Data Analyst"
+
+    if analyst_support_score >= 4:
+        return "Data Analyst"
+
+    # ============================================================
+    # 8. NOTHING STRONG ENOUGH
+    # ============================================================
+
+    return None
+
+    """
+    Detect primary job specialization using domain-aware rules.
+
+    Priority:
+    1. Strong primary role signals
+    2. Strong domain signals
+    3. Supporting technical signals
+    4. Data Analyst fallback
+    """
+
+    if not text:
+        return None
+
+    text_lower = text.lower()
+
+    # ==========================================================
+    # 1. PRIMARY ROLE SIGNALS
+    # ==========================================================
+
+    # Data Scientist is a primary role.
+    # This must win over supporting mentions such as
+    # "data engineering team", "data pipelines", etc.
+    if re.search(r"\bdata scientist\b", text_lower):
+        return "Data Science"
+
+    # Data Engineer is a primary role.
+    if re.search(r"\bdata engineer\b", text_lower):
+        return "Data Engineering"
+
+    # Software Engineer / Developer is a primary role.
+    if re.search(
+        r"\b("
+        r"software engineer|"
+        r"software developer|"
+        r"application developer|"
+        r"backend developer|"
+        r"frontend developer|"
+        r"full[- ]stack developer"
+        r")\b",
+        text_lower,
+    ):
+        return "Software Engineering"
+
+    # Civil / Architecture roles
+    if re.search(
+        r"\b("
+        r"civil engineer|"
+        r"civil engineering|"
+        r"architect|"
+        r"architecture|"
+        r"structural engineer|"
+        r"structural engineering"
+        r")\b",
+        text_lower,
+    ):
+        return "Civil Engineering"
+
+    # ==========================================================
+    # 2. BUSINESS ANALYTICS
+    # ==========================================================
+
+    # Strong explicit Business Analytics signals.
+    strong_business_patterns = [
+        r"\bbusiness analyst\b",
+        r"\bbusiness analytics\b",
+        r"\bbusiness intelligence\b",
+        r"\bproduct analytics\b",
+        r"\bgrowth analytics\b",
+        r"\bcommercial analytics\b",
+        r"\boperations analytics\b",
+        r"\bmarket analytics\b",
+        r"\bstrategic analytics\b",
+        r"\bunit economics\b",
+    ]
+
+    business_score = sum(
+        bool(re.search(pattern, text_lower))
+        for pattern in strong_business_patterns
+    )
+
+    if business_score >= 1:
+        return "Business Analytics"
+
+    # Supporting business signals
+    business_support_patterns = [
+        r"\bbusiness performance\b",
+        r"\bbusiness insights\b",
+        r"\bdata[- ]driven decision[- ]making\b",
+        r"\bperformance dashboards?\b",
+        r"\bperformance trackers?\b",
+        r"\bforecasting\b",
+    ]
+
+    business_support_score = sum(
+        bool(re.search(pattern, text_lower))
+        for pattern in business_support_patterns
+    )
+
+    if business_support_score >= 2:
+        return "Business Analytics"
+
+    # ==========================================================
+    # 3. FINANCE
+    # ==========================================================
+
+    finance_patterns = [
+        r"\bcredit risk\b",
+        r"\brisk analytics\b",
+        r"\bcredit analytics\b",
+        r"\bloan\b",
+        r"\bloans\b",
+        r"\bdelinquency\b",
+        r"\brepayment\b",
+        r"\bnbfc\b",
+        r"\bfintech\b",
+        r"\bstock broking\b",
+        r"\bstock brokerage\b",
+        r"\basset management\b",
+        r"\bamc\b",
+        r"\bprivate equity\b",
+        r"\bventure capital\b",
+        r"\binvestment\b",
+        r"\binvestments\b",
+        r"\binvestor\b",
+        r"\binvestors\b",
+        r"\bvaluation\b",
+        r"\bvaluation reporting\b",
+        r"\bfinancial reporting\b",
+        r"\bfinancial analysis\b",
+        r"\bfinance\b",
+        r"\bfund reporting\b",
+        r"\blp reporting\b",
+        r"\bportfolio management\b",
+        r"\bportfolio monitoring\b",
+        r"\bcomparable company analysis\b",
+        r"\bdiscounted cash flow\b",
+        r"\bdcf\b",
+    ]
+
+    finance_score = sum(
+        bool(re.search(pattern, text_lower))
+        for pattern in finance_patterns
+    )
+
+    if finance_score >= 2:
+        return "Finance"
+
+    # ==========================================================
+    # 4. DATA SCIENCE
+    # ==========================================================
+
+    data_science_patterns = [
+        r"\bdata science\b",
+        r"\bmachine learning\b",
+        r"\bstatistical modeling\b",
+        r"\bstatistical modelling\b",
+        r"\bpredictive model\b",
+        r"\bpredictive analytics\b",
+        r"\bclassification\b",
+        r"\bregression\b",
+        r"\bclustering\b",
+        r"\bforecasting\b",
+        r"\banomaly detection\b",
+        r"\bdeep learning\b",
+        r"\bmodel development\b",
+        r"\bmodel validation\b",
+        r"\bmodel deployment\b",
+    ]
+
+    data_science_score = sum(
+        bool(re.search(pattern, text_lower))
+        for pattern in data_science_patterns
+    )
+
+    if data_science_score >= 3:
+        return "Data Science"
+
+    # ==========================================================
+    # 5. DATA ENGINEERING
+    # ==========================================================
+
+    # IMPORTANT:
+    # Do NOT classify as Data Engineering merely because
+    # the description says "data engineering team".
+    #
+    # Require stronger engineering evidence.
+
+    data_engineering_patterns = [
+        r"\bdata engineer\b",
+        r"\bdata engineering\b",
+        r"\bdata pipeline\b",
+        r"\betl\b",
+        r"\bdata warehouse\b",
+        r"\bdata lake\b",
+        r"\bdata ingestion\b",
+        r"\bdata integration\b",
+        r"\bdata infrastructure\b",
+        r"\bapache spark\b",
+        r"\bdatabricks\b",
+        r"\bsnowflake\b",
+        r"\bairflow\b",
+        r"\bdbt\b",
+    ]
+
+    data_engineering_score = sum(
+        bool(re.search(pattern, text_lower))
+        for pattern in data_engineering_patterns
+    )
+
+    if data_engineering_score >= 3:
+        return "Data Engineering"
+
+    # ==========================================================
+    # 6. SOFTWARE ENGINEERING
+    # ==========================================================
+
+    software_patterns = [
+        r"\bsoftware engineering\b",
+        r"\bsoftware development\b",
+        r"\bapplication development\b",
+        r"\bbackend development\b",
+        r"\bfrontend development\b",
+        r"\bfull[- ]stack development\b",
+        r"\bapi development\b",
+        r"\bapi engineering\b",
+    ]
+
+    software_score = sum(
+        bool(re.search(pattern, text_lower))
+        for pattern in software_patterns
+    )
+
+    if software_score >= 2:
+        return "Software Engineering"
+
+    # ==========================================================
+    # 7. DATA ANALYST
+    # ==========================================================
+
+    if re.search(r"\bdata analyst\b", text_lower):
+        return "Data Analyst"
+
+    # Generic data analytics
+    if re.search(r"\bdata analytics\b", text_lower):
+        return "Data Analyst"
+
+    # ==========================================================
+    # 8. NO CLEAR SPECIALIZATION
+    # ==========================================================
+
+    return None
 # ==============================
 # DEGREE PREDICTION
 # ==============================
@@ -584,36 +1082,79 @@ def predict_degree(job_description):
 # SPECIALIZATION PREDICTION
 # ==============================
 
-def predict_specialization(job_description):
-    if not job_description or not job_description.strip():
+def predict_specialization(job_description: str) -> str:
+    """
+    Predict job specialization.
+
+    Priority:
+    1. Explicit/domain-aware rule detection
+    2. ML model prediction with confidence threshold
+    3. Not Specified
+    """
+
+    if not job_description:
         return "Not Specified"
 
-    explicit = detect_explicit_specialization(job_description)
-    if explicit:
-        return explicit[0]
+    text = str(job_description).strip()
 
-    if specialization_model is not None and specialization_vectorizer is not None:
-        try:
-            cleaned_description = extract_specialization_text(job_description)
-            text_vector = specialization_vectorizer.transform([cleaned_description])
-            probabilities = specialization_model.predict_proba(text_vector)[0]
-            best_index = probabilities.argmax()
-            predicted_specialization = str(specialization_model.classes_[best_index])
-            confidence = probabilities[best_index] * 100
-            if confidence >= 60:
-                return predicted_specialization
-        except Exception as error:
-            print(f"[ML Prediction Error] Specialization inference failed: {error}")
-            pass
+    if not text:
+        return "Not Specified"
+
+    # ==========================================================
+    # STEP 1: RULE-BASED DETECTION
+    # ==========================================================
+
+    explicit_specialization = detect_explicit_specialization(text)
+
+    if explicit_specialization:
+        return explicit_specialization
+
+    # ==========================================================
+    # STEP 2: ML FALLBACK
+    # ==========================================================
+
+    if (
+        specialization_vectorizer is None
+        or specialization_model is None
+    ):
+        return "Not Specified"
+
+    try:
+        vector = specialization_vectorizer.transform([text])
+
+        probabilities = specialization_model.predict_proba(vector)[0]
+
+        best_index = probabilities.argmax()
+
+        confidence = probabilities[best_index]
+
+        prediction = specialization_model.classes_[best_index]
+
+        if confidence >= 0.60:
+            return str(prediction)
+
+    except Exception:
+        return "Not Specified"
 
     return "Not Specified"
-
 
 # ==============================
 # COMPLETE JOB PREDICTION
 # ==============================
 
-def predict_job_details(job_description):
+def predict_job_details(job_description: str) -> dict:
+    """
+    Predict degree and specialization for a job description.
+    """
+
+    degree = predict_degree(job_description)
+
+    specialization = predict_specialization(job_description)
+
+    return {
+        "predicted_degree": degree,
+        "predicted_specialization": specialization,
+    }
     degree = predict_degree(job_description)
     specialization = predict_specialization(job_description)
 
