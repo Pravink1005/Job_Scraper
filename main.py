@@ -21,8 +21,19 @@ Pipeline flow:
 
 IMPORTANT:
     ml/ml_predictor.py is kept completely unchanged.
-"""
 
+SEARCH KEYWORDS:
+    The common SEARCH_KEYWORDS list from config.py is used
+    for both LinkedIn and Naukri.
+
+Example in config.py:
+
+    SEARCH_KEYWORDS = [
+        "data analyst",
+        "data scientist",
+        "business analyst",
+    ]
+"""
 
 from __future__ import annotations
 
@@ -31,12 +42,25 @@ import csv
 import sqlite3
 import sys
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Optional
 
 
 # ============================================================
 # PROJECT IMPORTS
 # ============================================================
+
+from config import (
+    SEARCH_KEYWORDS,
+    OUTPUT_DIR as CONFIG_OUTPUT_DIR,
+    LINKEDIN_LOCATION,
+    LINKEDIN_MAX_JOBS_PER_KEYWORD,
+    LINKEDIN_MAX_AGE_HOURS,
+    NAUKRI_MAX_PAGES,
+    NAUKRI_MAX_JOBS,
+    NAUKRI_MAX_TOTAL,
+    NAUKRI_DELAY_SECONDS,
+    NAUKRI_HEADLESS,
+)
 
 from pipeline.orchestrator import run_pipeline
 from pipeline.storage import JobStore
@@ -54,124 +78,12 @@ from scrapers.naukri.scraper import (
 # CONSTANTS
 # ============================================================
 
-DEFAULT_OUTPUT_DIR = "csv_output"
+DEFAULT_OUTPUT_DIR = str(
+    CONFIG_OUTPUT_DIR
+)
+
 CSV_FILENAME = "unified_jobs.csv"
 DB_FILENAME = "jobs.db"
-
-
-# ============================================================
-# ARGUMENT PARSER
-# ============================================================
-
-def build_parser() -> argparse.ArgumentParser:
-    """
-    Build command-line argument parser.
-    """
-
-    parser = argparse.ArgumentParser(
-        description=(
-            "Unified LinkedIn + Naukri "
-            "Job Scraping Pipeline"
-        )
-    )
-
-    # --------------------------------------------------------
-    # GENERAL
-    # --------------------------------------------------------
-
-    parser.add_argument(
-        "--source",
-        choices=[
-            "linkedin",
-            "naukri",
-            "both",
-        ],
-        default="both",
-        help="Job source to scrape.",
-    )
-
-    parser.add_argument(
-        "--output-dir",
-        default=DEFAULT_OUTPUT_DIR,
-        help="Directory for CSV, state and SQLite output.",
-    )
-
-    parser.add_argument(
-        "--rebuild-output",
-        action="store_true",
-        help="Delete existing unified CSV/state before scraping.",
-    )
-
-    parser.add_argument(
-        "--no-enrichment",
-        action="store_true",
-        help="Disable ML enrichment.",
-    )
-
-    # --------------------------------------------------------
-    # LINKEDIN
-    # --------------------------------------------------------
-
-    parser.add_argument(
-        "--linkedin-keywords",
-        default=(
-            "data analyst,"
-        ),
-        help="Comma-separated LinkedIn keywords.",
-    )
-
-    parser.add_argument(
-        "--linkedin-location",
-        default="India",
-        help="LinkedIn search location.",
-    )
-
-    parser.add_argument(
-        "--linkedin-max-jobs",
-        type=int,
-        default=100,
-        help="Maximum LinkedIn jobs.",
-    )
-
-    parser.add_argument(
-        "--linkedin-max-age-hours",
-        type=float,
-        default=24.0,
-        help="Only collect LinkedIn jobs posted within the last N hours.",
-    )
-
-    # --------------------------------------------------------
-    # NAUKRI
-    # --------------------------------------------------------
-
-    parser.add_argument(
-        "--naukri-titles",
-        default="data analyst",
-        help="Comma-separated Naukri job titles.",
-    )
-
-    parser.add_argument(
-        "--naukri-max-pages",
-        type=int,
-        default=5,
-        help="Maximum Naukri pages.",
-    )
-
-    parser.add_argument(
-        "--naukri-max-jobs",
-        type=int,
-        default=20,
-        help="Maximum Naukri jobs.",
-    )
-
-    parser.add_argument(
-        "--naukri-headless",
-        type=parse_bool,
-        default=True,
-        help="Run Naukri browser headless: true/false.",
-    )
-
-    return parser
 
 
 # ============================================================
@@ -236,6 +148,18 @@ def split_csv(
 ) -> list[str]:
     """
     Convert comma-separated input into a clean list.
+
+    Example:
+
+        "data analyst, data scientist, business analyst"
+
+    becomes:
+
+        [
+            "data analyst",
+            "data scientist",
+            "business analyst",
+        ]
     """
 
     return [
@@ -243,6 +167,233 @@ def split_csv(
         for item in str(value).split(",")
         if item.strip()
     ]
+
+
+def build_naukri_search_url(
+    keyword: str,
+    job_age_days: int = 1,
+) -> str:
+    """
+    Build a Naukri search URL from a job keyword.
+
+    Example:
+
+        data analyst
+
+    becomes:
+
+        https://www.naukri.com/data-analyst-jobs?jobAge=1
+    """
+
+    keyword = str(
+        keyword
+    ).strip()
+
+    keyword_slug = (
+        keyword
+        .lower()
+        .replace(" ", "-")
+    )
+
+    return (
+        "https://www.naukri.com/"
+        f"{keyword_slug}-jobs"
+        f"?jobAge={job_age_days}"
+    )
+
+
+def build_naukri_search_urls(
+    keywords: list[str],
+) -> list[str]:
+    """
+    Build one Naukri search URL for each keyword.
+
+    Example:
+
+        [
+            "data analyst",
+            "data scientist",
+            "business analyst",
+        ]
+
+    becomes:
+
+        https://www.naukri.com/data-analyst-jobs?jobAge=1
+        https://www.naukri.com/data-scientist-jobs?jobAge=1
+        https://www.naukri.com/business-analyst-jobs?jobAge=1
+    """
+
+    search_urls = []
+
+    for keyword in keywords:
+
+        keyword = str(
+            keyword
+        ).strip()
+
+        if not keyword:
+            continue
+
+        search_urls.append(
+            build_naukri_search_url(
+                keyword=keyword,
+                job_age_days=1,
+            )
+        )
+
+    return search_urls
+
+
+# ============================================================
+# ARGUMENT PARSER
+# ============================================================
+
+def build_parser() -> argparse.ArgumentParser:
+    """
+    Build command-line argument parser.
+
+    By default, the search keywords come from config.py:
+
+        SEARCH_KEYWORDS = [
+            "data analyst",
+            "data scientist",
+            "business analyst",
+        ]
+
+    The command-line options can still temporarily override
+    the configuration.
+    """
+
+    # --------------------------------------------------------
+    # MASTER KEYWORDS FROM CONFIG
+    # --------------------------------------------------------
+
+    default_keywords = ",".join(
+        SEARCH_KEYWORDS
+    )
+
+    parser = argparse.ArgumentParser(
+        description=(
+            "Unified LinkedIn + Naukri "
+            "Job Scraping Pipeline"
+        )
+    )
+
+    # ========================================================
+    # GENERAL
+    # ========================================================
+
+    parser.add_argument(
+        "--source",
+        choices=[
+            "linkedin",
+            "naukri",
+            "both",
+        ],
+        default="both",
+        help="Job source to scrape.",
+    )
+
+    parser.add_argument(
+        "--output-dir",
+        default=DEFAULT_OUTPUT_DIR,
+        help=(
+            "Directory for CSV, state "
+            "and SQLite output."
+        ),
+    )
+
+    parser.add_argument(
+        "--rebuild-output",
+        action="store_true",
+        help=(
+            "Delete existing unified CSV/state "
+            "before scraping."
+        ),
+    )
+
+    parser.add_argument(
+        "--no-enrichment",
+        action="store_true",
+        help="Disable ML enrichment.",
+    )
+
+    # ========================================================
+    # LINKEDIN
+    # ========================================================
+
+    parser.add_argument(
+        "--linkedin-keywords",
+        default=default_keywords,
+        help=(
+            "Comma-separated LinkedIn keywords. "
+            "Defaults to SEARCH_KEYWORDS from config.py."
+        ),
+    )
+
+    parser.add_argument(
+        "--linkedin-location",
+        default=LINKEDIN_LOCATION,
+        help="LinkedIn search location.",
+    )
+
+    parser.add_argument(
+        "--linkedin-max-jobs",
+        type=int,
+        default=LINKEDIN_MAX_JOBS_PER_KEYWORD,
+        help=(
+            "Maximum LinkedIn jobs per keyword."
+        ),
+    )
+
+    parser.add_argument(
+        "--linkedin-max-age-hours",
+        type=float,
+        default=LINKEDIN_MAX_AGE_HOURS,
+        help=(
+            "Only collect LinkedIn jobs posted "
+            "within the last N hours."
+        ),
+    )
+
+    # ========================================================
+    # NAUKRI
+    # ========================================================
+
+    parser.add_argument(
+        "--naukri-titles",
+        default=default_keywords,
+        help=(
+            "Comma-separated Naukri job titles. "
+            "Defaults to SEARCH_KEYWORDS from config.py."
+        ),
+    )
+
+    parser.add_argument(
+        "--naukri-max-pages",
+        type=int,
+        default=NAUKRI_MAX_PAGES,
+        help="Maximum Naukri pages per search.",
+    )
+
+    parser.add_argument(
+        "--naukri-max-jobs",
+        type=int,
+        default=NAUKRI_MAX_JOBS,
+        help="Maximum Naukri jobs per search.",
+    )
+
+    parser.add_argument(
+        "--naukri-headless",
+        type=parse_bool,
+        default=NAUKRI_HEADLESS,
+        help=(
+            "Run Naukri browser headless: "
+            "true/false."
+        ),
+    )
+
+    return parser
 
 
 # ============================================================
@@ -255,9 +406,6 @@ def sync_csv_to_sqlite(
 ) -> bool:
     """
     Import unified_jobs.csv into the requested SQLite database.
-
-    This implementation is intentionally local to main.py so
-    --output-dir works correctly.
 
     Existing records are updated using job_id.
     """
@@ -323,8 +471,7 @@ def sync_csv_to_sqlite(
             create_table_sql
         )
 
-        inserted = 0
-        updated = 0
+        processed = 0
         skipped = 0
 
         with open(
@@ -378,7 +525,9 @@ def sync_csv_to_sqlite(
             for row in reader:
 
                 job_id = (
-                    row.get("job_id")
+                    row.get(
+                        "job_id"
+                    )
                     or ""
                 ).strip()
 
@@ -390,70 +539,87 @@ def sync_csv_to_sqlite(
 
                 values = (
                     job_id,
+
                     row.get(
                         "source",
                         "Not Specified",
                     ),
+
                     row.get(
                         "title",
                         "Not Specified",
                     ),
+
                     row.get(
                         "company",
                         "Not Specified",
                     ),
+
                     row.get(
                         "category",
                         "Not Specified",
                     ),
+
                     row.get(
                         "city",
                         "Not Specified",
                     ),
+
                     row.get(
                         "state",
                         "Not Specified",
                     ),
+
                     row.get(
                         "country",
                         "Not Specified",
                     ),
+
                     row.get(
                         "min_experience_years",
                         "Not Specified",
                     ),
+
                     row.get(
                         "max_experience_years",
                         "Not Specified",
                     ),
+
                     row.get(
                         "salary",
                         "Not Specified",
                     ),
+
                     row.get(
                         "skills",
                         "Not Specified",
                     ),
+
                     row.get(
                         "degree_required",
                         "Not Specified",
                     ),
+
                     row.get(
                         "specialization_required",
                         "Not Specified",
                     ),
+
                     row.get(
                         "posted_time",
                         "Not Specified",
                     ),
+
                     row.get(
                         "collected_at",
                         "Not Specified",
                     ),
+
                     row.get(
                         "link",
                         "Not Specified",
                     ),
+
                     row.get(
                         "full_description",
                         "Not Specified",
@@ -483,8 +649,8 @@ def sync_csv_to_sqlite(
                         full_description
                     )
                     VALUES (
-                        ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                        ?, ?, ?, ?, ?, ?, ?, ?, ?
+                        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                        ?, ?, ?, ?, ?, ?, ?, ?
                     )
                     ON CONFLICT(job_id)
                     DO UPDATE SET
@@ -516,17 +682,13 @@ def sync_csv_to_sqlite(
                     values,
                 )
 
-                # SQLite's rowcount is not a reliable
-                # insert/update distinction for every
-                # SQLite version, so we simply count
-                # processed rows here.
-                inserted += 1
+                processed += 1
 
         connection.commit()
 
-        # ----------------------------------------------------
+        # ====================================================
         # INDEXES
-        # ----------------------------------------------------
+        # ====================================================
 
         cursor.execute(
             """
@@ -562,9 +724,9 @@ def sync_csv_to_sqlite(
 
         connection.commit()
 
-        # ----------------------------------------------------
+        # ====================================================
         # VERIFY DATABASE
-        # ----------------------------------------------------
+        # ====================================================
 
         cursor.execute(
             "SELECT COUNT(*) FROM jobs"
@@ -591,7 +753,7 @@ def sync_csv_to_sqlite(
 
         print(
             f"Rows processed : "
-            f"{inserted + skipped}"
+            f"{processed + skipped}"
         )
 
         print(
@@ -605,7 +767,10 @@ def sync_csv_to_sqlite(
         )
 
         print("")
-        print("Jobs by source:")
+
+        print(
+            "Jobs by source:"
+        )
 
         for source, count in source_counts:
 
@@ -614,6 +779,7 @@ def sync_csv_to_sqlite(
             )
 
         print("")
+
         print(
             f"SQLite database: {db_path}"
         )
@@ -713,9 +879,21 @@ def main(
         / DB_FILENAME
     )
 
-    # --------------------------------------------------------
+    # ========================================================
+    # KEYWORDS
+    # ========================================================
+
+    linkedin_keywords = split_csv(
+        args.linkedin_keywords
+    )
+
+    naukri_titles = split_csv(
+        args.naukri_titles
+    )
+
+    # ========================================================
     # HEADER
-    # --------------------------------------------------------
+    # ========================================================
 
     print("")
     print("=" * 70)
@@ -742,32 +920,48 @@ def main(
         f"{not args.no_enrichment}"
     )
 
+    print("")
+
+    print(
+        "[Pipeline] Search Keywords:"
+    )
+
+    for index, keyword in enumerate(
+        linkedin_keywords,
+        start=1,
+    ):
+
+        print(
+            f"  {index}. {keyword}"
+        )
+
     print("=" * 70)
 
-    # --------------------------------------------------------
+    # ========================================================
     # OUTPUT DIRECTORY
-    # --------------------------------------------------------
+    # ========================================================
 
     output_dir.mkdir(
         parents=True,
         exist_ok=True,
     )
 
-    # --------------------------------------------------------
+    # ========================================================
     # STORAGE
-    # --------------------------------------------------------
+    # ========================================================
 
     store = JobStore(
         output_dir=output_dir
     )
 
-    # --------------------------------------------------------
+    # ========================================================
     # REBUILD
-    # --------------------------------------------------------
+    # ========================================================
 
     if args.rebuild_output:
 
         print("")
+
         print(
             "[Pipeline] "
             "Rebuild mode enabled"
@@ -775,44 +969,95 @@ def main(
 
         # Reset CSV/state storage
         store.reset()
-        
+
         # Reset SQLite database
         if db_path.exists():
+
             db_path.unlink()
 
             print(
-                "[Pipeline] Existing SQLite database removed."
+                "[Pipeline] "
+                "Existing SQLite database removed."
             )
 
-    # --------------------------------------------------------
+    # ========================================================
     # LINKEDIN CONFIG
-    # --------------------------------------------------------
+    # ========================================================
 
     linkedin_kwargs = {
-        "keywords": split_csv(
-            args.linkedin_keywords
-        ),
+        "keywords": linkedin_keywords,
         "location": args.linkedin_location,
         "max_jobs": args.linkedin_max_jobs,
         "max_age_hours": args.linkedin_max_age_hours,
     }
 
-    # --------------------------------------------------------
+    # ========================================================
+    # NAUKRI SEARCH URLS
+    # ========================================================
+
+    naukri_search_urls = (
+        build_naukri_search_urls(
+            naukri_titles
+        )
+    )
+
+    # ========================================================
     # NAUKRI CONFIG
-    # --------------------------------------------------------
+    # ========================================================
 
     naukri_kwargs = {
-        "titles": split_csv(
-            args.naukri_titles
-        ),
-        "max_pages": args.naukri_max_pages,
-        "max_jobs": args.naukri_max_jobs,
-        "headless": args.naukri_headless,
-    }
+    "search_urls": naukri_search_urls,
 
-    # --------------------------------------------------------
+    "titles": naukri_titles,
+
+    "max_pages": (
+        args.naukri_max_pages
+    ),
+
+    "max_total": (
+        20
+    ),
+
+    "max_jobs": (
+        args.naukri_max_jobs
+    ),
+
+    "headless": (
+        args.naukri_headless
+    ),
+
+    "enable_detail_pages": (
+        False
+    ),
+        }
+
+    # ========================================================
+    # SHOW NAUKRI SEARCH URLS
+    # ========================================================
+
+    if args.source in {
+        "naukri",
+        "both",
+    }:
+
+        print("")
+
+        print(
+            "[Pipeline] Naukri Search URLs:"
+        )
+
+        for index, url in enumerate(
+            naukri_search_urls,
+            start=1,
+        ):
+
+            print(
+                f"  {index}. {url}"
+            )
+
+    # ========================================================
     # SELECT COLLECTORS
-    # --------------------------------------------------------
+    # ========================================================
 
     linkedin_collector = None
     naukri_collector = None
@@ -835,9 +1080,9 @@ def main(
             collect_naukri_jobs
         )
 
-    # --------------------------------------------------------
+    # ========================================================
     # RUN SCRAPING PIPELINE
-    # --------------------------------------------------------
+    # ========================================================
 
     try:
 
@@ -873,7 +1118,9 @@ def main(
 
         print("")
         print("=" * 70)
-        print("PIPELINE CONFIGURATION ERROR")
+        print(
+            "PIPELINE CONFIGURATION ERROR"
+        )
         print("=" * 70)
 
         print(
@@ -881,6 +1128,7 @@ def main(
         )
 
         print("")
+
         print(
             "Check scraper function signatures "
             "and pipeline/orchestrator.py."
@@ -893,6 +1141,7 @@ def main(
     except KeyboardInterrupt:
 
         print("")
+
         print(
             "[Pipeline] Interrupted by user."
         )
@@ -915,28 +1164,30 @@ def main(
 
         return 1
 
-    # --------------------------------------------------------
+    # ========================================================
     # REPORT
-    # --------------------------------------------------------
+    # ========================================================
 
     print_pipeline_report(
         report
     )
 
-    # --------------------------------------------------------
+    # ========================================================
     # SQLITE SYNC
-    # --------------------------------------------------------
+    # ========================================================
 
     if not csv_path.exists():
 
         print("")
+
         print(
             f"[SQLite] CSV not found: "
             f"{csv_path}"
         )
 
         print(
-            "[Pipeline] No SQLite sync performed."
+            "[Pipeline] "
+            "No SQLite sync performed."
         )
 
         return 1
@@ -970,13 +1221,15 @@ def main(
 
         return 1
 
-    # --------------------------------------------------------
+    # ========================================================
     # FINAL
-    # --------------------------------------------------------
+    # ========================================================
 
     print("")
     print("=" * 70)
-    print("PIPELINE FINISHED SUCCESSFULLY")
+    print(
+        "PIPELINE FINISHED SUCCESSFULLY"
+    )
     print("=" * 70)
 
     print(
@@ -1007,9 +1260,9 @@ def _run_main_tests() -> None:
     print("MAIN MODULE TEST")
     print("=" * 70)
 
-    # --------------------------------------------------------
-    # Boolean parser
-    # --------------------------------------------------------
+    # ========================================================
+    # BOOLEAN PARSER
+    # ========================================================
 
     assert parse_bool(
         "true"
@@ -1043,9 +1296,9 @@ def _run_main_tests() -> None:
         "[PASS] Boolean parser"
     )
 
-    # --------------------------------------------------------
-    # CSV splitter
-    # --------------------------------------------------------
+    # ========================================================
+    # CSV SPLITTER
+    # ========================================================
 
     result = split_csv(
         "data analyst, data scientist, business analyst"
@@ -1061,9 +1314,9 @@ def _run_main_tests() -> None:
         "[PASS] CSV argument parser"
     )
 
-    # --------------------------------------------------------
-    # Empty CSV splitter
-    # --------------------------------------------------------
+    # ========================================================
+    # EMPTY CSV VALUES
+    # ========================================================
 
     result = split_csv(
         "data analyst,, ,data scientist"
@@ -1078,9 +1331,102 @@ def _run_main_tests() -> None:
         "[PASS] Empty CSV values removed"
     )
 
-    # --------------------------------------------------------
-    # Parser defaults
-    # --------------------------------------------------------
+    # ========================================================
+    # NAUKRI URL GENERATION
+    # ========================================================
+
+    test_url = build_naukri_search_url(
+        "data analyst"
+    )
+
+    assert (
+        test_url
+        == (
+            "https://www.naukri.com/"
+            "data-analyst-jobs"
+            "?jobAge=1"
+        )
+    )
+
+    print(
+        "[PASS] Naukri single URL generation"
+    )
+
+    # ========================================================
+    # MULTIPLE NAUKRI URL GENERATION
+    # ========================================================
+
+    test_keywords = [
+        "data analyst",
+        "data scientist",
+        "business analyst",
+    ]
+
+    naukri_urls = (
+        build_naukri_search_urls(
+            test_keywords
+        )
+    )
+
+    assert (
+        len(naukri_urls)
+        == 3
+    )
+
+    assert (
+        naukri_urls[0]
+        == (
+            "https://www.naukri.com/"
+            "data-analyst-jobs"
+            "?jobAge=1"
+        )
+    )
+
+    assert (
+        naukri_urls[1]
+        == (
+            "https://www.naukri.com/"
+            "data-scientist-jobs"
+            "?jobAge=1"
+        )
+    )
+
+    assert (
+        naukri_urls[2]
+        == (
+            "https://www.naukri.com/"
+            "business-analyst-jobs"
+            "?jobAge=1"
+        )
+    )
+
+    print(
+        "[PASS] Naukri multiple URL generation"
+    )
+
+    # ========================================================
+    # CONFIG KEYWORDS
+    # ========================================================
+
+    assert (
+        isinstance(
+            SEARCH_KEYWORDS,
+            list,
+        )
+    )
+
+    assert (
+        len(SEARCH_KEYWORDS)
+        > 0
+    )
+
+    print(
+        "[PASS] SEARCH_KEYWORDS loaded from config.py"
+    )
+
+    # ========================================================
+    # DEFAULT ARGUMENTS
+    # ========================================================
 
     parser = build_parser()
 
@@ -1100,26 +1446,57 @@ def _run_main_tests() -> None:
 
     assert (
         args.linkedin_location
-        == "India"
+        == LINKEDIN_LOCATION
+    )
+
+    assert (
+        args.linkedin_max_jobs
+        == LINKEDIN_MAX_JOBS_PER_KEYWORD
     )
 
     assert (
         args.linkedin_max_age_hours
-        == 24.0
+        == LINKEDIN_MAX_AGE_HOURS
+    )
+
+    assert (
+        args.naukri_max_pages
+        == NAUKRI_MAX_PAGES
+    )
+
+    assert (
+        args.naukri_max_jobs
+        == NAUKRI_MAX_JOBS
     )
 
     assert (
         args.naukri_headless
-        is True
+        == NAUKRI_HEADLESS
+    )
+
+    # LinkedIn and Naukri must both use
+    # SEARCH_KEYWORDS by default.
+    assert (
+        split_csv(
+            args.linkedin_keywords
+        )
+        == SEARCH_KEYWORDS
+    )
+
+    assert (
+        split_csv(
+            args.naukri_titles
+        )
+        == SEARCH_KEYWORDS
     )
 
     print(
         "[PASS] Argument defaults"
     )
 
-    # --------------------------------------------------------
-    # Parser source selection
-    # --------------------------------------------------------
+    # ========================================================
+    # LINKEDIN ARGUMENTS
+    # ========================================================
 
     args = parser.parse_args(
         [
@@ -1151,9 +1528,9 @@ def _run_main_tests() -> None:
         "[PASS] LinkedIn arguments"
     )
 
-    # --------------------------------------------------------
-    # Naukri arguments
-    # --------------------------------------------------------
+    # ========================================================
+    # NAUKRI ARGUMENTS
+    # ========================================================
 
     args = parser.parse_args(
         [
@@ -1192,9 +1569,9 @@ def _run_main_tests() -> None:
         "[PASS] Naukri arguments"
     )
 
-    # --------------------------------------------------------
-    # Path construction
-    # --------------------------------------------------------
+    # ========================================================
+    # OUTPUT PATHS
+    # ========================================================
 
     test_output = Path(
         "test_output"
@@ -1218,9 +1595,9 @@ def _run_main_tests() -> None:
         "[PASS] Output path construction"
     )
 
-    # --------------------------------------------------------
-    # Complete
-    # --------------------------------------------------------
+    # ========================================================
+    # COMPLETE
+    # ========================================================
 
     print("")
     print("=" * 70)
@@ -1236,15 +1613,12 @@ def _run_main_tests() -> None:
 
 if __name__ == "__main__":
 
-    # Run normal pipeline when arguments are supplied.
+    # Run normal pipeline:
     #
-    # Run:
     #     python main.py
     #
-    # Run module:
-    #     python -m main
-    #
     # Run tests:
+    #
     #     python main.py --test
 
     if "--test" in sys.argv:

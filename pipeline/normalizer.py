@@ -894,7 +894,7 @@ def _normalize_education(
 
     Examples:
 
-        B\\.?E\\., Bachelor(?:'s)?, degree
+        B\.?E\., Bachelor(?:'s)?, degree
 
     becomes:
 
@@ -1136,12 +1136,255 @@ def _clean_experience(
     return text or NOT_SPECIFIED
 
 
+# ============================================================
+# EXPERIENCE FROM TEXT
+# ============================================================
+
+def _parse_experience_text(
+    text: Any,
+) -> Optional[Tuple[str, str]]:
+    """
+    Extract experience directly from text.
+
+    Supported examples:
+
+        2-5 years
+        2 to 5 years
+        2+ years
+        minimum 3 years
+        min 3 years
+        at least 3 years
+        3 years of experience
+        3 yrs of experience
+        experience: 3 years
+        6 months of experience
+        fresher
+    """
+
+    text = _clean(text)
+
+    if not text:
+        return None
+
+    text_lower = text.lower()
+
+    number = r"\d+(?:\.\d+)?"
+
+    # --------------------------------------------------------
+    # Fresher
+    # --------------------------------------------------------
+
+    if re.search(
+        r"\bfreshers?\b",
+        text_lower,
+        flags=re.I,
+    ):
+
+        return (
+            "0",
+            "0",
+        )
+
+    # --------------------------------------------------------
+    # X - Y years
+    # --------------------------------------------------------
+
+    match = re.search(
+        rf"\b({number})\s*"
+        rf"(?:-|–|—|to)\s*"
+        rf"({number})\s*"
+        rf"(?:years?|yrs?)\b",
+        text_lower,
+        flags=re.I,
+    )
+
+    if match:
+
+        return (
+            match.group(1),
+            match.group(2),
+        )
+
+    # --------------------------------------------------------
+    # X+ years
+    # --------------------------------------------------------
+
+    match = re.search(
+        rf"\b({number})\s*\+\s*"
+        rf"(?:years?|yrs?)\b",
+        text_lower,
+        flags=re.I,
+    )
+
+    if match:
+
+        return (
+            match.group(1),
+            NOT_SPECIFIED,
+        )
+
+    # --------------------------------------------------------
+    # Minimum / Min / At least X years
+    # --------------------------------------------------------
+
+    match = re.search(
+        rf"\b(?:minimum|min|at\s+least)\s*"
+        rf"({number})\s*"
+        rf"(?:years?|yrs?)\b",
+        text_lower,
+        flags=re.I,
+    )
+
+    if match:
+
+        return (
+            match.group(1),
+            NOT_SPECIFIED,
+        )
+
+    # --------------------------------------------------------
+    # X years of experience
+    # --------------------------------------------------------
+
+    match = re.search(
+        rf"\b({number})\s*"
+        rf"(?:years?|yrs?)\s+"
+        rf"(?:of\s+)?experience\b",
+        text_lower,
+        flags=re.I,
+    )
+
+    if match:
+
+        value = match.group(1)
+
+        return (
+            value,
+            value,
+        )
+
+    # --------------------------------------------------------
+    # Experience: X years
+    # --------------------------------------------------------
+
+    match = re.search(
+        rf"\bexperience\s*"
+        rf"(?:required\s*)?"
+        rf"[:=-]\s*"
+        rf"({number})\s*"
+        rf"(?:years?|yrs?)\b",
+        text_lower,
+        flags=re.I,
+    )
+
+    if match:
+
+        value = match.group(1)
+
+        return (
+            value,
+            value,
+        )
+
+    # --------------------------------------------------------
+    # X months of experience
+    # --------------------------------------------------------
+
+    match = re.search(
+        rf"\b({number})\s*"
+        rf"(?:months?|mos?)\s+"
+        rf"(?:of\s+)?experience\b",
+        text_lower,
+        flags=re.I,
+    )
+
+    if match:
+
+        months = float(
+            match.group(1)
+        )
+
+        years = months / 12
+
+        years_text = (
+            str(int(years))
+            if years.is_integer()
+            else str(round(years, 2))
+        )
+
+        return (
+            years_text,
+            years_text,
+        )
+
+    # --------------------------------------------------------
+    # X months experience required
+    # --------------------------------------------------------
+
+    match = re.search(
+        rf"\b({number})\s*"
+        rf"(?:months?|mos?)\s+"
+        rf"(?:experience|required|exp)\b",
+        text_lower,
+        flags=re.I,
+    )
+
+    if match:
+
+        months = float(
+            match.group(1)
+        )
+
+        years = months / 12
+
+        years_text = (
+            str(int(years))
+            if years.is_integer()
+            else str(round(years, 2))
+        )
+
+        return (
+            years_text,
+            years_text,
+        )
+
+    return None
+
+
+# ============================================================
+# EXPERIENCE RANGE
+# ============================================================
+
 def _extract_experience_range(
     raw_job: Dict[str, Any],
+    full_description: Any = "",
 ) -> Tuple[str, str]:
     """
     Extract minimum and maximum experience.
+
+    Priority:
+
+    1. full_description
+    2. separate experience fields
+    3. combined experience field
+
+    The job description is the primary source.
     """
+
+    # ========================================================
+    # 1. FULL DESCRIPTION - PRIMARY SOURCE
+    # ========================================================
+
+    description_result = _parse_experience_text(
+        full_description
+    )
+
+    if description_result:
+        return description_result
+
+    # ========================================================
+    # 2. EXISTING SEPARATE EXPERIENCE FIELDS
+    # ========================================================
 
     minimum = _first_value(
         raw_job,
@@ -1159,10 +1402,6 @@ def _extract_experience_range(
         default="",
     )
 
-    # --------------------------------------------------------
-    # If both already exist
-    # --------------------------------------------------------
-
     if minimum or maximum:
 
         return (
@@ -1174,9 +1413,9 @@ def _extract_experience_range(
             ),
         )
 
-    # --------------------------------------------------------
-    # Try combined experience field
-    # --------------------------------------------------------
+    # ========================================================
+    # 3. EXISTING COMBINED EXPERIENCE FIELD
+    # ========================================================
 
     combined = _first_value(
         raw_job,
@@ -1185,59 +1424,12 @@ def _extract_experience_range(
         default="",
     )
 
-    if not combined:
-
-        return (
-            NOT_SPECIFIED,
-            NOT_SPECIFIED,
-        )
-
-    # Example:
-    #
-    # 2 - 5 years
-    # 2 to 5 years
-    # 2+ years
-    #
-
-    match = re.search(
-        r"(\d+(?:\.\d+)?)"
-        r"\s*(?:-|–|—|to)\s*"
-        r"(\d+(?:\.\d+)?)",
-        combined,
-        flags=re.I,
+    combined_result = _parse_experience_text(
+        combined
     )
 
-    if match:
-
-        return (
-            match.group(1),
-            match.group(2),
-        )
-
-    match = re.search(
-        r"(\d+(?:\.\d+)?)\s*\+",
-        combined,
-        flags=re.I,
-    )
-
-    if match:
-
-        return (
-            match.group(1),
-            NOT_SPECIFIED,
-        )
-
-    match = re.search(
-        r"(\d+(?:\.\d+)?)",
-        combined,
-    )
-
-    if match:
-
-        return (
-            match.group(1),
-            NOT_SPECIFIED,
-        )
+    if combined_result:
+        return combined_result
 
     return (
         NOT_SPECIFIED,
@@ -1346,6 +1538,10 @@ def _extract_common_fields(
 ) -> Dict[str, str]:
     """
     Extract common fields before creating UnifiedJob.
+
+    Category and salary are intentionally disabled.
+
+    Experience is extracted primarily from full_description.
     """
 
     source = _first_value(
@@ -1370,12 +1566,11 @@ def _extract_common_fields(
         default=NOT_SPECIFIED,
     )
 
-    category = _first_value(
-        raw_job,
-        "category",
-        "job_category",
-        default=NOT_SPECIFIED,
-    )
+    # --------------------------------------------------------
+    # CATEGORY DISABLED
+    # --------------------------------------------------------
+
+    category = NOT_SPECIFIED
 
     job_id = _first_value(
         raw_job,
@@ -1392,12 +1587,11 @@ def _extract_common_fields(
             raw_job,
         )
 
-    salary = _first_value(
-        raw_job,
-        "salary",
-        "salary_range",
-        default=NOT_SPECIFIED,
-    )
+    # --------------------------------------------------------
+    # SALARY DISABLED
+    # --------------------------------------------------------
+
+    salary = NOT_SPECIFIED
 
     skills = _first_value(
         raw_job,
@@ -1458,6 +1652,10 @@ def _extract_common_fields(
         default=NOT_SPECIFIED,
     )
 
+    # --------------------------------------------------------
+    # FULL DESCRIPTION
+    # --------------------------------------------------------
+
     full_description = _first_value(
         raw_job,
         "full_description",
@@ -1467,9 +1665,14 @@ def _extract_common_fields(
         default=NOT_SPECIFIED,
     )
 
+    # --------------------------------------------------------
+    # EXPERIENCE FROM FULL DESCRIPTION
+    # --------------------------------------------------------
+
     minimum, maximum = (
         _extract_experience_range(
-            raw_job
+            raw_job,
+            full_description,
         )
     )
 
@@ -1478,10 +1681,10 @@ def _extract_common_fields(
         "source": _not_specified(source),
         "title": _not_specified(title),
         "company": _not_specified(company),
-        "category": _not_specified(category),
+        "category": category,
         "min_experience_years": minimum,
         "max_experience_years": maximum,
-        "salary": _not_specified(salary),
+        "salary": salary,
         "skills": _not_specified(skills),
         "degree_required": degree_required,
         "specialization_required": (
@@ -2197,6 +2400,262 @@ def _run_education_tests():
 
 
 # ============================================================
+# EXPERIENCE TESTS
+# ============================================================
+
+def _run_experience_tests():
+
+    print()
+    print("-" * 70)
+    print("EXPERIENCE FROM FULL DESCRIPTION TESTS")
+    print("-" * 70)
+
+    # --------------------------------------------------------
+    # 3-5 years
+    # --------------------------------------------------------
+
+    job_1 = normalize_linkedin_job(
+        {
+            "source": "LinkedIn",
+            "title": "Data Analyst",
+            "company": "Test Company",
+            "location": "Chennai, Tamil Nadu, India",
+            "full_description": (
+                "We are looking for a Data Analyst "
+                "with 3-5 years of experience "
+                "in SQL and Power BI."
+            ),
+        }
+    )
+
+    print()
+    print("Test 1: 3-5 years")
+    print(
+        f"  Min Exp : {job_1.min_experience_years}"
+    )
+    print(
+        f"  Max Exp : {job_1.max_experience_years}"
+    )
+
+    _assert_equal(
+        (
+            job_1.min_experience_years,
+            job_1.max_experience_years,
+        ),
+        (
+            "3",
+            "5",
+        ),
+        "Experience 3-5 years",
+    )
+
+    # --------------------------------------------------------
+    # Minimum 4 years
+    # --------------------------------------------------------
+
+    job_2 = normalize_linkedin_job(
+        {
+            "source": "LinkedIn",
+            "title": "Data Analyst",
+            "company": "Test Company",
+            "location": "Bengaluru, Karnataka, India",
+            "full_description": (
+                "Minimum 4 years of experience "
+                "in data analytics."
+            ),
+        }
+    )
+
+    print()
+    print("Test 2: Minimum 4 years")
+    print(
+        f"  Min Exp : {job_2.min_experience_years}"
+    )
+    print(
+        f"  Max Exp : {job_2.max_experience_years}"
+    )
+
+    _assert_equal(
+        (
+            job_2.min_experience_years,
+            job_2.max_experience_years,
+        ),
+        (
+            "4",
+            NOT_SPECIFIED,
+        ),
+        "Experience minimum 4 years",
+    )
+
+    # --------------------------------------------------------
+    # 2+ years
+    # --------------------------------------------------------
+
+    job_3 = normalize_naukri_job(
+        {
+            "source": "Naukri",
+            "title": "Data Engineer",
+            "company": "Test Company",
+            "location": "Hyderabad, Telangana, India",
+            "full_description": (
+                "Candidates should have 2+ years "
+                "of experience with Python and SQL."
+            ),
+        }
+    )
+
+    print()
+    print("Test 3: 2+ years")
+    print(
+        f"  Min Exp : {job_3.min_experience_years}"
+    )
+    print(
+        f"  Max Exp : {job_3.max_experience_years}"
+    )
+
+    _assert_equal(
+        (
+            job_3.min_experience_years,
+            job_3.max_experience_years,
+        ),
+        (
+            "2",
+            NOT_SPECIFIED,
+        ),
+        "Experience 2+ years",
+    )
+
+    # --------------------------------------------------------
+    # 6 months
+    # --------------------------------------------------------
+
+    job_4 = normalize_naukri_job(
+        {
+            "source": "Naukri",
+            "title": "Data Analyst",
+            "company": "Test Company",
+            "location": "Chennai, Tamil Nadu, India",
+            "full_description": (
+                "Candidates with 6 months "
+                "of experience are eligible."
+            ),
+        }
+    )
+
+    print()
+    print("Test 4: 6 months")
+    print(
+        f"  Min Exp : {job_4.min_experience_years}"
+    )
+    print(
+        f"  Max Exp : {job_4.max_experience_years}"
+    )
+
+    _assert_equal(
+        (
+            job_4.min_experience_years,
+            job_4.max_experience_years,
+        ),
+        (
+            "0.5",
+            "0.5",
+        ),
+        "Experience 6 months",
+    )
+
+    # --------------------------------------------------------
+    # Description must override old structured value
+    # --------------------------------------------------------
+
+    job_5 = normalize_linkedin_job(
+        {
+            "source": "LinkedIn",
+            "title": "Data Analyst",
+            "company": "Test Company",
+            "location": "Mumbai, Maharashtra, India",
+            "min_experience_years": "1",
+            "max_experience_years": "2",
+            "full_description": (
+                "The candidate should have "
+                "5-7 years of experience "
+                "working with SQL and Power BI."
+            ),
+        }
+    )
+
+    print()
+    print(
+        "Test 5: Full description overrides "
+        "structured experience"
+    )
+
+    print(
+        f"  Min Exp : {job_5.min_experience_years}"
+    )
+
+    print(
+        f"  Max Exp : {job_5.max_experience_years}"
+    )
+
+    _assert_equal(
+        (
+            job_5.min_experience_years,
+            job_5.max_experience_years,
+        ),
+        (
+            "5",
+            "7",
+        ),
+        "Full description experience priority",
+    )
+
+    # --------------------------------------------------------
+    # Fresher
+    # --------------------------------------------------------
+
+    job_6 = normalize_linkedin_job(
+        {
+            "source": "LinkedIn",
+            "title": "Junior Data Analyst",
+            "company": "Test Company",
+            "location": "Coimbatore, Tamil Nadu, India",
+            "full_description": (
+                "Freshers are welcome to apply "
+                "for this position."
+            ),
+        }
+    )
+
+    print()
+    print("Test 6: Fresher")
+
+    print(
+        f"  Min Exp : {job_6.min_experience_years}"
+    )
+
+    print(
+        f"  Max Exp : {job_6.max_experience_years}"
+    )
+
+    _assert_equal(
+        (
+            job_6.min_experience_years,
+            job_6.max_experience_years,
+        ),
+        (
+            "0",
+            "0",
+        ),
+        "Fresher experience",
+    )
+
+    print()
+    print(
+        "[PASS] Experience from full description tests"
+    )
+
+
+# ============================================================
 # FULL NORMALIZER TESTS
 # ============================================================
 
@@ -2265,6 +2724,14 @@ def _run_full_tests():
         f"  Max Exp : {job.max_experience_years}"
     )
 
+    print(
+        f"  Category: {job.category}"
+    )
+
+    print(
+        f"  Salary  : {job.salary}"
+    )
+
     _assert_equal(
         (
             job.city,
@@ -2283,6 +2750,30 @@ def _run_full_tests():
         job.degree_required,
         "B.E., Bachelor's, degree",
         "LinkedIn education",
+    )
+
+    _assert_equal(
+        job.min_experience_years,
+        "2",
+        "LinkedIn minimum experience fallback",
+    )
+
+    _assert_equal(
+        job.max_experience_years,
+        "5",
+        "LinkedIn maximum experience fallback",
+    )
+
+    _assert_equal(
+        job.category,
+        NOT_SPECIFIED,
+        "LinkedIn category disabled",
+    )
+
+    _assert_equal(
+        job.salary,
+        NOT_SPECIFIED,
+        "LinkedIn salary disabled",
     )
 
     # --------------------------------------------------------
@@ -2449,6 +2940,14 @@ def _run_full_tests():
         f"  Degree  : {naukri_job.degree_required}"
     )
 
+    print(
+        f"  Category: {naukri_job.category}"
+    )
+
+    print(
+        f"  Salary  : {naukri_job.salary}"
+    )
+
     _assert_equal(
         (
             naukri_job.city,
@@ -2467,6 +2966,18 @@ def _run_full_tests():
         naukri_job.degree_required,
         "B.E., Bachelor's, degree",
         "Naukri education",
+    )
+
+    _assert_equal(
+        naukri_job.category,
+        NOT_SPECIFIED,
+        "Naukri category disabled",
+    )
+
+    _assert_equal(
+        naukri_job.salary,
+        NOT_SPECIFIED,
+        "Naukri salary disabled",
     )
 
     # --------------------------------------------------------
@@ -2562,6 +3073,8 @@ if __name__ == "__main__":
     _run_separate_location_tests()
 
     _run_education_tests()
+
+    _run_experience_tests()
 
     _run_full_tests()
 
