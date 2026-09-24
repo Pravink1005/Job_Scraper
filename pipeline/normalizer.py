@@ -1133,6 +1133,13 @@ def _normalize_education(
         text,
     )
 
+    text = re.sub(
+        r"(?:,\s*)?\bdegree\b\s*$",
+        "",
+        text,
+        flags=re.I,
+    )
+
     return _clean(
         text
     ) or NOT_SPECIFIED

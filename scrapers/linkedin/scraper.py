@@ -1608,11 +1608,6 @@ def extract_education(
             "Ph.D."
         ),
 
-        (
-            r"\bdegree\b",
-            "degree"
-        ),
-
     ]
 
     for pattern, label in patterns:
