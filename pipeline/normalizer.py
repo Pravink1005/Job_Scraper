@@ -1550,6 +1550,26 @@ def _extract_experience_range(
     The job description is the primary source.
     """
 
+    link = _first_value(
+        raw_job,
+        "link",
+        "url",
+        "job_url",
+        default="",
+    )
+
+    url_match = re.search(
+        r"(?:-|/)(\d+)-to-(\d+)-years?(?:-|/|$)",
+        link,
+        flags=re.I,
+    )
+
+    if url_match:
+        return (
+            url_match.group(1),
+            url_match.group(2),
+        )
+
     # ========================================================
     # 1. EXPLICIT STRUCTURED/SOURCE EXPERIENCE
     # ========================================================
