@@ -393,6 +393,15 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
 
+    parser.add_argument(
+        "--naukri-detail-pages",
+        action="store_true",
+        help=(
+            "Fetch Naukri detail pages to extract "
+            "skills and education."
+        ),
+    )
+
     return parser
 
 
@@ -1064,7 +1073,7 @@ def main(
     ),
 
     "enable_detail_pages": (
-        False
+        args.naukri_detail_pages
     ),
         }
 

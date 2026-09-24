@@ -285,6 +285,7 @@ This runs the full flow: **LinkedIn → Naukri → Normalize → Validate → ML
 | `--naukri-max-pages 5` | Max pages to scrape on Naukri |
 | `--naukri-max-jobs 20` | Max jobs to collect on Naukri |
 | `--naukri-headless` | Run the Naukri browser headlessly |
+| `--naukri-detail-pages` | Fetch Naukri detail pages for richer skills and education |
 
 **Common examples:**
 ```bash
@@ -292,7 +293,7 @@ This runs the full flow: **LinkedIn → Naukri → Normalize → Validate → ML
 python main.py --source linkedin
 
 # Naukri only
-python main.py --source naukri
+python main.py --source naukri --naukri-detail-pages
 
 # Small test run (2 jobs, last 1 hour only)
 python main.py --source both --linkedin-max-jobs 2 --linkedin-max-age-hours 1

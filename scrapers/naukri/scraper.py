@@ -4,6 +4,7 @@
 # ============================================================
 
 import logging
+import json
 import re
 import time
 
@@ -887,9 +888,255 @@ def clean_skill(
     return skill.strip()
 
 
+def _jsonld_records(
+    element: Any
+) -> List[Dict[str, Any]]:
+
+    body = getattr(
+        element,
+        "body",
+        b"",
+    )
+
+    if isinstance(body, bytes):
+        body = body.decode(
+            "utf-8",
+            errors="ignore",
+        )
+
+    if not body:
+        return []
+
+    records = []
+
+    script_pattern = (
+        r"<script[^>]+type=[\"']application/ld\+json"
+        r"[\"'][^>]*>(.*?)</script>"
+    )
+
+    for script in re.findall(
+        script_pattern,
+        body,
+        flags=re.IGNORECASE | re.DOTALL,
+    ):
+
+        try:
+            data = json.loads(script.strip())
+        except (TypeError, json.JSONDecodeError):
+            continue
+
+        if isinstance(data, dict):
+            records.append(data)
+
+            graph = data.get("@graph")
+
+            if isinstance(graph, list):
+                records.extend(
+                    item
+                    for item in graph
+                    if isinstance(item, dict)
+                )
+
+        elif isinstance(data, list):
+            records.extend(
+                item
+                for item in data
+                if isinstance(item, dict)
+            )
+
+    return records
+
+
+def _extract_jsonld_skills(
+    element: Any
+) -> str:
+
+    skills = []
+
+    for record in _jsonld_records(element):
+
+        value = record.get("skills")
+
+        if isinstance(value, list):
+            values = value
+        else:
+            values = [value]
+
+        for skill in values:
+
+            skill = clean_skill(
+                str(skill or "")
+            )
+
+            if skill and skill not in skills:
+                skills.append(skill)
+
+    if not skills:
+        return NOT_SPECIFIED
+
+    return ", ".join(
+        skills[:30]
+    )
+
+
+def _extract_jsonld_education(
+    element: Any
+) -> str:
+
+    for record in _jsonld_records(element):
+
+        qualifications = record.get(
+            "qualifications"
+        )
+
+        if isinstance(qualifications, dict):
+            qualifications = qualifications.get(
+                "educationalLevel"
+            )
+
+        if qualifications:
+            education = extract_education_from_text(
+                str(qualifications)
+            )
+
+            if education != NOT_SPECIFIED:
+                return education
+
+    return NOT_SPECIFIED
+
+
+def _extract_jsonld_specialization(
+    element: Any
+) -> str:
+
+    specializations = []
+
+    for record in _jsonld_records(element):
+
+        qualifications = record.get(
+            "qualifications"
+        )
+
+        if isinstance(qualifications, dict):
+            qualifications = qualifications.get(
+                "educationalLevel"
+            )
+
+        if not qualifications:
+            continue
+
+        matches = re.findall(
+            r"\bin\s+([^,]+)",
+            str(qualifications),
+            flags=re.IGNORECASE,
+        )
+
+        for value in matches:
+
+            value = clean_text(
+                value
+            )
+
+            if value and value not in specializations:
+                specializations.append(value)
+
+    if not specializations:
+        return NOT_SPECIFIED
+
+    return ", ".join(
+        specializations[:30]
+    )
+
+
+def extract_skills_from_text(
+    text: str
+) -> str:
+
+    text = clean_text(
+        text
+    )
+
+    if not text:
+        return NOT_SPECIFIED
+
+    match = re.search(
+        r"\bkey\s+skills?\b\s*(.*?)(?=\b(?:education|additional information|role|industry type|department)\b|$)",
+        text,
+        flags=re.IGNORECASE,
+    )
+
+    if not match:
+        return NOT_SPECIFIED
+
+    skills_text = match.group(1).strip(" :|- ")
+    skills = []
+
+    known_skills = [
+        "Cloud Computing",
+        "Machine Learning",
+        "Power BI",
+        "DevOps",
+        "Docker",
+        "Kubernetes",
+        "Terraform",
+        "Python",
+        "JavaScript",
+        "TypeScript",
+        "Java",
+        "SQL",
+        "AWS",
+        "Azure",
+        "GCP",
+        "ECS",
+        "CI/CD",
+        "Git",
+    ]
+
+    for known_skill in known_skills:
+
+        if re.search(
+            rf"(?<![A-Za-z]){re.escape(known_skill)}(?![A-Za-z])",
+            skills_text,
+            flags=re.IGNORECASE,
+        ):
+            skills.append(known_skill)
+
+    if skills:
+        return ", ".join(skills[:30])
+
+    for value in re.split(
+        r"\s{2,}|\s*,\s*|\s*\|\s*",
+        skills_text,
+    ):
+
+        value = clean_skill(value)
+
+        if (
+            value
+            and value.lower() not in {"skills", "key skills"}
+            and len(value) <= 60
+            and value not in skills
+        ):
+            skills.append(value)
+
+    if not skills:
+        return NOT_SPECIFIED
+
+    return ", ".join(
+        skills[:30]
+    )
+
+
 def extract_skills(
     element: Any
 ) -> str:
+
+    jsonld_skills = _extract_jsonld_skills(
+        element
+    )
+
+    if jsonld_skills != NOT_SPECIFIED:
+        return jsonld_skills
 
     selectors = [
 
@@ -942,7 +1189,9 @@ def extract_skills(
             continue
 
     if not skills:
-        return NOT_SPECIFIED
+        return extract_skills_from_text(
+            get_element_text(element)
+        )
 
     return ", ".join(
         skills[:30]
@@ -963,7 +1212,7 @@ EDUCATION_PATTERNS = [
 
     r"\bB\.?\s*Com\.?\b",
 
-    r"\bB\.?\s*CA\b",
+    r"\bB\.?\s*C\.?\s*A\.?\b",
 
     r"\bB\.?\s*BA\b",
 
@@ -1041,6 +1290,13 @@ def extract_education_from_text(
 def extract_education(
     element: Any
 ) -> str:
+
+    jsonld_education = _extract_jsonld_education(
+        element
+    )
+
+    if jsonld_education != NOT_SPECIFIED:
+        return jsonld_education
 
     selectors = [
 
@@ -1129,6 +1385,13 @@ def extract_education_from_card(
 def extract_specialization(
     element: Any
 ) -> str:
+
+    jsonld_specialization = _extract_jsonld_specialization(
+        element
+    )
+
+    if jsonld_specialization != NOT_SPECIFIED:
+        return jsonld_specialization
 
     selectors = [
 
@@ -1584,6 +1847,13 @@ def enrich_job_from_detail(
         education = extract_education(
             response
         )
+
+        skills = extract_skills(
+            response
+        )
+
+        if skills != NOT_SPECIFIED:
+            job["skills"] = skills
 
         if education != NOT_SPECIFIED:
 

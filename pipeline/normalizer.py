@@ -101,6 +101,28 @@ INDIAN_STATES = [
     "Lakshadweep",
 ]
 
+INDIAN_CITY_TO_STATE = {
+    "Ahmedabad": "Gujarat",
+    "Bengaluru": "Karnataka",
+    "Bangalore": "Karnataka",
+    "Bhubaneswar": "Odisha",
+    "Chennai": "Tamil Nadu",
+    "Coimbatore": "Tamil Nadu",
+    "Delhi": "Delhi",
+    "Faridabad": "Haryana",
+    "Gurgaon": "Haryana",
+    "Gurugram": "Haryana",
+    "Hyderabad": "Telangana",
+    "Jaipur": "Rajasthan",
+    "Kolkata": "West Bengal",
+    "Lucknow": "Uttar Pradesh",
+    "Mumbai": "Maharashtra",
+    "Noida": "Uttar Pradesh",
+    "Pune": "Maharashtra",
+    "Ranchi": "Jharkhand",
+    "Visakhapatnam": "Andhra Pradesh",
+}
+
 
 # ============================================================
 # GENERIC CLEANING
@@ -449,6 +471,17 @@ def _split_location_parts(
 
     if not city:
         city = NOT_SPECIFIED
+
+    if state == NOT_SPECIFIED and city != NOT_SPECIFIED:
+        inferred_state = INDIAN_CITY_TO_STATE.get(city)
+        if inferred_state:
+            state = inferred_state
+
+    if (
+        country == NOT_SPECIFIED
+        or country == ""
+    ) and city != NOT_SPECIFIED:
+        country = "India"
 
     return (
         city,

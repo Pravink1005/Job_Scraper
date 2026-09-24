@@ -123,8 +123,7 @@ def _bool(env_value, default):
 # ============================================================================
 
 DEFAULT_SEARCH_KEYWORDS = [
-    "data analyst",
-    "python developer",
+    "java developer","java engineer"
 ]
 
 # Environment variable priority:
