@@ -2030,6 +2030,75 @@ def normalize_naukri_job(
         raw_job
     )
 
+    if fields["title"].strip().lower() in {
+        "",
+        "not specified",
+        "job description",
+        "job details",
+        "about the role",
+        "about the job",
+        "job summary",
+        "key responsibilities",
+    }:
+
+        link = fields["link"]
+        slug = link.split("?", 1)[0].rstrip("/").rsplit("/", 1)[-1]
+        slug = re.sub(
+            r"^job-listings-",
+            "",
+            slug,
+            flags=re.I,
+        )
+        slug = re.sub(
+            r"-\d+-to-\d+-years?-\d+$",
+            "",
+            slug,
+            flags=re.I,
+        )
+        company_slug = re.sub(
+            r"[^a-z0-9]+",
+            "-",
+            fields["company"].lower(),
+        ).strip("-")
+        title_slug = slug
+
+        if company_slug:
+            company_match = re.search(
+                rf"(?:^|-){re.escape(company_slug)}(?:-|$)",
+                slug,
+            )
+            if company_match:
+                title_slug = slug[:company_match.start()].strip("-")
+
+        if title_slug == slug:
+            locations = re.split(
+                r"[,/]",
+                _first_value(
+                    raw_job,
+                    "location",
+                    "job_location",
+                    "locations",
+                    default="",
+                ),
+            )
+            for location in locations:
+                location_slug = re.sub(
+                    r"[^a-z0-9]+",
+                    "-",
+                    location.lower(),
+                ).strip("-")
+                if not location_slug:
+                    continue
+                location_match = re.search(
+                    rf"(?:^|-){re.escape(location_slug)}(?:-|$)",
+                    slug,
+                )
+                if location_match:
+                    title_slug = slug[:location_match.start()].strip("-")
+                    break
+
+        fields["title"] = title_slug.replace("-", " ").strip() or NOT_SPECIFIED
+
     city, state, country = (
         _normalize_naukri_location(
             raw_job

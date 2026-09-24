@@ -746,6 +746,8 @@ def extract_title(
 
     selectors = [
 
+        "h1",
+
         "a.title",
 
         "a[class*='title']",
@@ -760,13 +762,34 @@ def extract_title(
 
     ]
 
-    title = first_text(
-        element,
-        selectors
-    )
+    generic_titles = {
+        "job description",
+        "job details",
+        "about the role",
+        "about the job",
+        "job summary",
+        "key responsibilities",
+    }
 
-    if title:
-        return title
+    for selector in selectors:
+
+        try:
+
+            found = element.css(
+                selector
+            )
+
+            for item in found:
+
+                title = get_element_text(
+                    item
+                )
+
+                if title and title.strip().lower() not in generic_titles:
+                    return title
+
+        except Exception:
+            continue
 
     return NOT_SPECIFIED
 
@@ -1865,7 +1888,18 @@ def enrich_job_from_detail(
             response
         )
 
-        if title != NOT_SPECIFIED:
+        if (
+            title != NOT_SPECIFIED
+            and title.strip().lower()
+            not in {
+                "job description",
+                "job details",
+                "about the role",
+                "about the job",
+                "job summary",
+                "key responsibilities",
+            }
+        ):
 
             job["title"] = title
             job["job_title"] = title
