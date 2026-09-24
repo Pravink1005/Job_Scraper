@@ -47,7 +47,7 @@ except ImportError:
 
 BASE_URL = "https://www.linkedin.com"
 
-NOT_SPECIFIED = "Not specified"
+NOT_SPECIFIED = "Not Specified"
 
 
 # ------------------------------------------------------------

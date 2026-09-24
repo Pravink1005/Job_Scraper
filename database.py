@@ -144,7 +144,7 @@ def import_csv_to_database():
                 row.get("country", "Not Specified"),
                 row.get("min_experience_years", "Not Specified"),
                 row.get("max_experience_years", "Not Specified"),
-                row.get("skills", "Not specified"),
+                row.get("skills", "Not Specified"),
                 row.get("degree_required", "Not Specified"),
                 row.get("specialization_required", "Not Specified"),
                 row.get("collected_at", "Not Specified"),
