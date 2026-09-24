@@ -1711,15 +1711,46 @@ def extract_skills(
     if not description:
         return NOT_SPECIFIED
 
-    description_lower = (
-        description.lower()
-    )
+    description_lower = description.lower()
+
+    def has_r_language_context() -> bool:
+        patterns = [
+            r"\br\s+(?:programming|language)\b",
+            r"\brstudio\b",
+            r"\busing\s+r\b",
+            r"\bexperience\s+with\s+r\b",
+            r"\bskills?\s*:[^.;]{0,120}\br\b",
+            r"\br\s*/\s*(?:python|sql)\b",
+            r"\b(?:python|sql)\s*/\s*r\b",
+            r"\br\s*,\s*(?:python|sql)\b",
+            r"\b(?:python|sql)\s*,\s*r\b",
+        ]
+
+        return any(
+            re.search(
+                pattern,
+                description_lower,
+                flags=re.I,
+            )
+            for pattern in patterns
+        )
 
     found = []
 
     for skill in COMMON_SKILLS:
 
-        if skill.lower() in description_lower:
+        if skill == "R":
+            if not has_r_language_context():
+                continue
+
+            found.append(skill)
+            continue
+
+        if re.search(
+            rf"(?<![A-Za-z0-9]){re.escape(skill.lower())}(?![A-Za-z0-9])",
+            description_lower,
+            flags=re.I,
+        ):
 
             found.append(
                 skill

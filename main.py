@@ -1074,6 +1074,7 @@ def main(
 
     "enable_detail_pages": (
         args.naukri_detail_pages
+        or not args.no_enrichment
     ),
         }
 

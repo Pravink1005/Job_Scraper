@@ -492,6 +492,24 @@ def check_experience(
                 min_value = float(min_exp)
                 max_value = float(max_exp)
 
+                if min_value > 100:
+                    problems.append(
+                        (
+                            index,
+                            "min_experience_years",
+                            f"suspicious value: {min_value}",
+                        )
+                    )
+
+                if max_value > 100:
+                    problems.append(
+                        (
+                            index,
+                            "max_experience_years",
+                            f"suspicious value: {max_value}",
+                        )
+                    )
+
                 if min_value > max_value:
 
                     problems.append(

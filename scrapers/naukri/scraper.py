@@ -1048,6 +1048,57 @@ def _extract_jsonld_specialization(
     )
 
 
+def _extract_jsonld_description(
+    element: Any
+) -> str:
+
+    for record in _jsonld_records(element):
+
+        description = record.get(
+            "description"
+        )
+
+        if description:
+            return clean_description(
+                description
+            )
+
+    return NOT_SPECIFIED
+
+
+def _extract_jsonld_experience(
+    element: Any
+) -> str:
+
+    for record in _jsonld_records(element):
+
+        requirements = record.get(
+            "experienceRequirements"
+        )
+
+        if isinstance(requirements, dict):
+            months = requirements.get(
+                "monthsOfExperience"
+            )
+
+            if months is not None:
+                try:
+                    years = float(months) / 12
+                except (TypeError, ValueError):
+                    continue
+
+                if years <= 100:
+                    value = (
+                        str(int(years))
+                        if years.is_integer()
+                        else str(round(years, 2))
+                    )
+
+                    return f"{value}+ years"
+
+    return NOT_SPECIFIED
+
+
 def extract_skills_from_text(
     text: str
 ) -> str:
@@ -1239,6 +1290,8 @@ EDUCATION_PATTERNS = [
     r"\bAny Graduate\b",
 
     r"\bAny Postgraduate\b",
+
+    r"\bGraduation\s+Not\s+Required\b",
 
 ]
 
@@ -1441,6 +1494,13 @@ def clean_description(
 def extract_description(
     element: Any
 ) -> str:
+
+    jsonld_description = _extract_jsonld_description(
+        element
+    )
+
+    if jsonld_description != NOT_SPECIFIED:
+        return jsonld_description
 
     selectors = [
 
@@ -1833,6 +1893,11 @@ def enrich_job_from_detail(
                 get_element_text(response)
             )
         )
+
+        if experience == NOT_SPECIFIED:
+            experience = _extract_jsonld_experience(
+                response
+            )
 
         if experience != NOT_SPECIFIED:
             job["experience"] = experience

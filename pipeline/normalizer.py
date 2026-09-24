@@ -1166,7 +1166,52 @@ def _clean_experience(
         text
     )
 
+    if not re.fullmatch(
+        r"\d+(?:\.\d+)?",
+        text,
+    ):
+        return NOT_SPECIFIED
+
+    try:
+        numeric_value = float(text)
+    except ValueError:
+        return NOT_SPECIFIED
+
+    if numeric_value > 100:
+        return NOT_SPECIFIED
+
     return text or NOT_SPECIFIED
+
+
+def _experience_is_non_role_context(
+    text: str,
+    start: int,
+    end: int,
+) -> bool:
+
+    prefix = text[max(0, start - 80):start].lower()
+    suffix = text[end:end + 80].lower()
+
+    if re.search(
+        r"(?:over|more than|nearly|almost)\s*$",
+        prefix,
+    ):
+        return True
+
+    if re.search(
+        r"(?:company|organization|business|industry|founded|established)"
+        r"[^.]{0,60}$",
+        prefix,
+    ):
+        return True
+
+    if re.match(
+        r"\s+(?:in|with|using|on|of\s+education|full\s+time)\b",
+        suffix,
+    ):
+        return True
+
+    return False
 
 
 # ============================================================
@@ -1231,7 +1276,11 @@ def _parse_experience_text(
         flags=re.I,
     )
 
-    if match:
+    if match and not _experience_is_non_role_context(
+        text_lower,
+        match.start(1),
+        match.end(0),
+    ):
 
         return (
             match.group(1),
@@ -1249,7 +1298,11 @@ def _parse_experience_text(
         flags=re.I,
     )
 
-    if match:
+    if match and not _experience_is_non_role_context(
+        text_lower,
+        match.start(1),
+        match.end(0),
+    ):
 
         return (
             match.group(1),
@@ -1261,14 +1314,18 @@ def _parse_experience_text(
     # --------------------------------------------------------
 
     match = re.search(
-        rf"\b(?:minimum|min|at\s+least)\s*"
+        rf"\b(?:minimum|min|at\s+least)\s+(?:of\s+)?"
         rf"({number})\s*"
         rf"(?:years?|yrs?)\b",
         text_lower,
         flags=re.I,
     )
 
-    if match:
+    if match and not _experience_is_non_role_context(
+        text_lower,
+        match.start(1),
+        match.end(0),
+    ):
 
         return (
             match.group(1),
@@ -1287,14 +1344,46 @@ def _parse_experience_text(
         flags=re.I,
     )
 
-    if match:
+    if match and not _experience_is_non_role_context(
+        text_lower,
+        match.start(1),
+        match.end(0),
+    ):
 
         value = match.group(1)
+
+        if float(value) > 100:
+            return None
 
         return (
             value,
             value,
         )
+
+    # --------------------------------------------------------
+    # Overall experience of X years
+    # --------------------------------------------------------
+
+    match = re.search(
+        rf"\boverall\s+experience\s+(?:of\s+)?"
+        rf"({number})\s*(?:years?|yrs?)\b",
+        text_lower,
+        flags=re.I,
+    )
+
+    if match and not _experience_is_non_role_context(
+        text_lower,
+        match.start(1),
+        match.end(0),
+    ):
+
+        value = match.group(1)
+
+        if float(value) <= 100:
+            return (
+                value,
+                value,
+            )
 
     # --------------------------------------------------------
     # Experience: X years
@@ -1310,9 +1399,16 @@ def _parse_experience_text(
         flags=re.I,
     )
 
-    if match:
+    if match and not _experience_is_non_role_context(
+        text_lower,
+        match.start(1),
+        match.end(0),
+    ):
 
         value = match.group(1)
+
+        if float(value) > 100:
+            return None
 
         return (
             value,
@@ -1331,7 +1427,11 @@ def _parse_experience_text(
         flags=re.I,
     )
 
-    if match:
+    if match and not _experience_is_non_role_context(
+        text_lower,
+        match.start(1),
+        match.end(0),
+    ):
 
         months = float(
             match.group(1)
@@ -1362,7 +1462,11 @@ def _parse_experience_text(
         flags=re.I,
     )
 
-    if match:
+    if match and not _experience_is_non_role_context(
+        text_lower,
+        match.start(1),
+        match.end(0),
+    ):
 
         months = float(
             match.group(1)
@@ -1380,6 +1484,31 @@ def _parse_experience_text(
             years_text,
             years_text,
         )
+
+    # --------------------------------------------------------
+    # Standalone X years
+    # --------------------------------------------------------
+
+    match = re.search(
+        rf"\b({number})\s*(?:years?|yrs?)\b"
+        rf"(?!\s+(?:of\s+)?(?:relevant\s+)?experience\b)",
+        text_lower,
+        flags=re.I,
+    )
+
+    if match and not _experience_is_non_role_context(
+        text_lower,
+        match.start(1),
+        match.end(0),
+    ):
+
+        value = match.group(1)
+
+        if float(value) <= 100:
+            return (
+                value,
+                value,
+            )
 
     return None
 
@@ -1405,18 +1534,7 @@ def _extract_experience_range(
     """
 
     # ========================================================
-    # 1. FULL DESCRIPTION - PRIMARY SOURCE
-    # ========================================================
-
-    description_result = _parse_experience_text(
-        full_description
-    )
-
-    if description_result:
-        return description_result
-
-    # ========================================================
-    # 2. EXISTING SEPARATE EXPERIENCE FIELDS
+    # 1. EXPLICIT STRUCTURED/SOURCE EXPERIENCE
     # ========================================================
 
     minimum = _first_value(
@@ -1437,18 +1555,22 @@ def _extract_experience_range(
 
     if minimum or maximum:
 
-        return (
-            _clean_experience(
-                minimum
-            ),
-            _clean_experience(
-                maximum
-            ),
+        cleaned_minimum = _clean_experience(
+            minimum
         )
 
-    # ========================================================
-    # 3. EXISTING COMBINED EXPERIENCE FIELD
-    # ========================================================
+        cleaned_maximum = _clean_experience(
+            maximum
+        )
+
+        if (
+            cleaned_minimum != NOT_SPECIFIED
+            or cleaned_maximum != NOT_SPECIFIED
+        ):
+            return (
+                cleaned_minimum,
+                cleaned_maximum,
+            )
 
     combined = _first_value(
         raw_job,
@@ -1463,6 +1585,42 @@ def _extract_experience_range(
 
     if combined_result:
         return combined_result
+
+    # ========================================================
+    # 2. CLEAR OVERALL EXPERIENCE IN DESCRIPTION
+    # ========================================================
+
+    description_result = _parse_experience_text(
+        full_description
+    )
+
+    if description_result:
+        return description_result
+
+    # ========================================================
+    # 3. NAUKRI URL RANGE
+    # ========================================================
+
+    link = _first_value(
+        raw_job,
+        "link",
+        "url",
+        "job_url",
+        default="",
+    )
+
+    url_match = re.search(
+        r"(?:-|/)(\d+)-to-(\d+)-years?(?:-|/|$)",
+        link,
+        flags=re.I,
+    )
+
+    if url_match:
+
+        return (
+            url_match.group(1),
+            url_match.group(2),
+        )
 
     return (
         NOT_SPECIFIED,
