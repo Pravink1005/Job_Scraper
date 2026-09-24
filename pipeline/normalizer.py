@@ -1134,7 +1134,7 @@ def _normalize_education(
     )
 
     text = re.sub(
-        r"(?:,\s*)?\bdegree\b\s*$",
+        r"(?:,\s*\bdegree\b\s*$|^\s*degree\s*$)",
         "",
         text,
         flags=re.I,
