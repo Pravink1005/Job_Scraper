@@ -30,6 +30,7 @@
 from __future__ import annotations
 
 import hashlib
+import html
 import re
 import sys
 
@@ -150,6 +151,22 @@ def _clean(value: Any) -> str:
     )
 
     return text.strip()
+
+
+def _strip_html(value: Any) -> str:
+    text = str(value or "")
+    text = re.sub(
+        r"<\s*/?\s*(?:br|p|div|li|ul|ol|section|article|h[1-6])\b[^>]*>",
+        " ",
+        text,
+        flags=re.I,
+    )
+    text = re.sub(
+        r"<[^>]*>",
+        "",
+        text,
+    )
+    return _clean(html.unescape(text))
 
 
 def _first_value(
@@ -1881,6 +1898,10 @@ def _extract_common_fields(
         "job_description",
         "Job Description",
         default=NOT_SPECIFIED,
+    )
+
+    full_description = _strip_html(
+        full_description
     )
 
     # --------------------------------------------------------
