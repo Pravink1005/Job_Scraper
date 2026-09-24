@@ -542,7 +542,6 @@ def detect_explicit_specialization(text: str):
     if re.search(
         r"\b("
         r"civil engineer|civil engineering|"
-        r"architect|architecture|"
         r"structural engineer|structural engineering"
         r")\b",
         text_lower,
