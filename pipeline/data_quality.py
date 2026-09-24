@@ -36,15 +36,22 @@ from collections import Counter
 from pathlib import Path
 from typing import Dict, List, Tuple
 
+from config import OUTPUT_DIR
+
 
 # ============================================================
 # CONFIGURATION
+#
+# CSV_PATH / DB_PATH are derived from config.OUTPUT_DIR so this
+# audit always checks the same files main.py/database.py write
+# to (respecting PIPELINE_OUTPUT_DIR). Do not hardcode
+# "csv_output" here again.
 # ============================================================
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
-CSV_PATH = PROJECT_ROOT / "csv_output" / "unified_jobs.csv"
-DB_PATH = PROJECT_ROOT / "csv_output" / "jobs.db"
+CSV_PATH = OUTPUT_DIR / "unified_jobs.csv"
+DB_PATH = OUTPUT_DIR / "jobs.db"
 
 EXPECTED_SOURCES = {"linkedin", "naukri"}
 
@@ -69,17 +76,15 @@ EXPECTED_COLUMNS = [
     "source",
     "title",
     "company",
-    "category",
+    "search_keyword",
     "city",
     "state",
     "country",
     "min_experience_years",
     "max_experience_years",
-    "salary",
     "skills",
     "degree_required",
     "specialization_required",
-    "posted_time",
     "collected_at",
     "link",
     "full_description",
@@ -973,7 +978,7 @@ def run_audit() -> bool:
     else:
 
         print(
-            "[PASS] CSV contains expected 18 columns"
+            "[PASS] CSV contains expected 16 columns"
         )
 
     # --------------------------------------------------------
@@ -1289,7 +1294,7 @@ def run_module_tests():
     print("[PASS] Experience validation")
 
     # Expected columns
-    assert len(EXPECTED_COLUMNS) == 18
+    assert len(EXPECTED_COLUMNS) == 16
 
     print("[PASS] CSV schema definition")
 

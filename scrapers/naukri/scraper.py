@@ -1857,6 +1857,11 @@ def collect_naukri_jobs(
 
     urls = []
 
+    # Maps each search URL back to the keyword that produced it,
+    # so every job collected from that URL can be tagged with
+    # the keyword the user actually searched for.
+    url_keywords: Dict[str, str] = {}
+
     if search_urls:
 
         for url in search_urls:
@@ -1902,6 +1907,11 @@ def collect_naukri_jobs(
                 urls.append(
                     url
                 )
+
+            # Tag this URL with its keyword, whether it was
+            # just added above or already present from
+            # search_urls.
+            url_keywords[url] = title
 
     if not urls:
 
@@ -1985,6 +1995,13 @@ def collect_naukri_jobs(
 
                 seen_ids.add(
                     job_id
+                )
+
+                job["search_keyword"] = (
+                    url_keywords.get(
+                        search_url,
+                        NOT_SPECIFIED,
+                    )
                 )
 
                 # ------------------------------------------------

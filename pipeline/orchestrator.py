@@ -298,27 +298,6 @@ def _adapt_source_job(
         adapted["Job Description"] = description
 
     # ========================================================
-    # POSTED DATE / TIME
-    # ========================================================
-
-    posted_date = _first_value(
-        raw,
-        "posted_date",
-        "posted_time",
-        "posted",
-        "Posted Date",
-        "Posted Time",
-    )
-
-    if posted_date:
-
-        adapted["posted_date"] = posted_date
-        adapted["posted_time"] = posted_date
-        adapted["posted"] = posted_date
-        adapted["Posted Date"] = posted_date
-        adapted["Posted Time"] = posted_date
-
-    # ========================================================
     # EDUCATION
     # ========================================================
 

@@ -49,17 +49,15 @@ CSV_FIELDS = [
     "source",
     "title",
     "company",
-    "category",
+    "search_keyword",
     "city",
     "state",
     "country",
     "min_experience_years",
     "max_experience_years",
-    "salary",
     "skills",
     "degree_required",
     "specialization_required",
-    "posted_time",
     "collected_at",
     "link",
     "full_description",
@@ -99,11 +97,15 @@ class UnifiedJob:
     link: str
 
     # --------------------------------------------------------
-    # COMPANY / CLASSIFICATION
+    # COMPANY / SEARCH ORIGIN
     # --------------------------------------------------------
 
     company: str = NOT_SPECIFIED
-    category: str = NOT_SPECIFIED
+
+    # The keyword that was searched for when this job was found
+    # (e.g. "data analyst"). Lets you filter/group the dataset
+    # by which search turned up each job.
+    search_keyword: str = NOT_SPECIFIED
 
     # --------------------------------------------------------
     # LOCATION
@@ -121,12 +123,6 @@ class UnifiedJob:
     max_experience_years: str = NOT_SPECIFIED
 
     # --------------------------------------------------------
-    # COMPENSATION
-    # --------------------------------------------------------
-
-    salary: str = NOT_SPECIFIED
-
-    # --------------------------------------------------------
     # REQUIREMENTS
     # --------------------------------------------------------
 
@@ -138,7 +134,6 @@ class UnifiedJob:
     # TIMESTAMP / DESCRIPTION
     # --------------------------------------------------------
 
-    posted_time: str = NOT_SPECIFIED
     collected_at: str = NOT_SPECIFIED
 
     full_description: str = NOT_SPECIFIED
@@ -229,17 +224,15 @@ def _run_schema_tests() -> None:
         source="LinkedIn",
         title="Data Analyst",
         company="Test Company",
-        category="Data Analytics",
+        search_keyword="data analyst",
         city="Hyderabad",
         state="Telangana",
         country="India",
         min_experience_years="2",
         max_experience_years="5",
-        salary="Not Specified",
         skills="Python, SQL, Power BI",
         degree_required="B.E., Bachelor's",
         specialization_required="Data Science",
-        posted_time="2 hours ago",
         collected_at="2026-09-22 10:00:00",
         link="https://example.com/job/1",
         full_description="Test job description",
@@ -323,7 +316,7 @@ def _run_schema_tests() -> None:
 
     assert (
         len(fields)
-        == 18
+        == 16
     )
 
     assert (

@@ -11,7 +11,7 @@ from pipeline.normalizer import normalize, normalize_linkedin_job, normalize_nau
 def _linkedin_raw(**overrides):
     base = {
         "job_id": "linkedin_4213567890",
-        "category": "Python Backend Developer",
+        "search_keyword": "backend engineer",
         "title": "Backend Engineer",
         "company": "Acme Corp",
         "city": "Bengaluru",
@@ -19,7 +19,6 @@ def _linkedin_raw(**overrides):
         "country": "India",
         "source": "LinkedIn",
         "collected_at": "2026-09-20T10:00:00",
-        "posted_time": "20-09-2026 09:00",
         "link": "https://www.linkedin.com/jobs/view/4213567890/",
         "full_description": "We need Python, Django and PostgreSQL experience.",
         "skills": "Python; Django; PostgreSQL",
@@ -40,6 +39,7 @@ def test_normalize_linkedin_happy_path():
     assert job.city == "Bengaluru"
     assert job.skills == "Python; Django; PostgreSQL"
     assert job.degree_required == "Bachelor's Degree"
+    assert job.search_keyword == "backend engineer"
 
 
 def test_normalize_linkedin_missing_link_raises():
@@ -81,13 +81,12 @@ def _naukri_raw(**overrides):
         "url": "https://www.naukri.com/job-listings-data-analyst-acme-bengaluru-1234",
         "title": "Data Analyst",
         "company": "Acme Corp",
+        "search_keyword": "data analyst",
         "location": "Bengaluru, Hyderabad, Pune",
         "experience": "2-5 Yrs",
-        "salary": "Not disclosed",
         "skills": "SQL; Excel; Power BI",
         "qualifications_education_required": "Any Graduate",
         "job_description_summary": "Analyze data using SQL and Excel.",
-        "posted": "20/09/2026 00:00:00",
     }
     base.update(overrides)
     return base
@@ -103,7 +102,7 @@ def test_normalize_naukri_happy_path():
     assert job.max_experience_years == "5"
     assert job.degree_required == "Any Graduate"
     assert job.specialization_required == "Not Specified"
-    assert job.posted_time == "20-09-2026 00:00"
+    assert job.search_keyword == "data analyst"
 
 
 def test_normalize_naukri_missing_url_raises():
@@ -136,16 +135,6 @@ def test_normalize_naukri_missing_experience_is_not_specified():
     job = normalize_naukri_job(_naukri_raw(experience=None))
     assert job.min_experience_years == "Not Specified"
     assert job.max_experience_years == "Not Specified"
-
-
-def test_normalize_naukri_unparsable_posted_date_kept_as_is():
-    job = normalize_naukri_job(_naukri_raw(posted="some odd text"))
-    assert job.posted_time == "some odd text"
-
-
-def test_normalize_naukri_missing_posted_date():
-    job = normalize_naukri_job(_naukri_raw(posted=None))
-    assert job.posted_time == "Not Specified"
 
 
 def test_normalize_naukri_job_id_is_stable_for_same_url():

@@ -442,17 +442,15 @@ def sync_csv_to_sqlite(
         source TEXT,
         title TEXT,
         company TEXT,
-        category TEXT,
+        search_keyword TEXT,
         city TEXT,
         state TEXT,
         country TEXT,
         min_experience_years TEXT,
         max_experience_years TEXT,
-        salary TEXT,
         skills TEXT,
         degree_required TEXT,
         specialization_required TEXT,
-        posted_time TEXT,
         collected_at TEXT,
         link TEXT,
         full_description TEXT
@@ -470,6 +468,61 @@ def sync_csv_to_sqlite(
         cursor.execute(
             create_table_sql
         )
+
+        # ----------------------------------------------------
+        # SCHEMA MIGRATION
+        #
+        # CREATE TABLE IF NOT EXISTS does nothing if the table
+        # already exists from before a schema change (e.g. an
+        # older jobs.db that predates the search_keyword
+        # column). Add any columns the current schema expects
+        # but the existing table doesn't have yet, so old
+        # databases keep working without the user needing to
+        # delete anything.
+        # ----------------------------------------------------
+
+        cursor.execute(
+            "PRAGMA table_info(jobs)"
+        )
+
+        existing_columns = {
+            row[1]
+            for row in cursor.fetchall()
+        }
+
+        expected_columns = [
+            "job_id",
+            "source",
+            "title",
+            "company",
+            "search_keyword",
+            "city",
+            "state",
+            "country",
+            "min_experience_years",
+            "max_experience_years",
+            "skills",
+            "degree_required",
+            "specialization_required",
+            "collected_at",
+            "link",
+            "full_description",
+        ]
+
+        for column in expected_columns:
+
+            if column not in existing_columns:
+
+                print(
+                    "[SQLite] Migrating existing database: "
+                    f"adding missing column '{column}'"
+                )
+
+                cursor.execute(
+                    f"ALTER TABLE jobs ADD COLUMN {column} TEXT"
+                )
+
+        connection.commit()
 
         processed = 0
         skipped = 0
@@ -490,17 +543,15 @@ def sync_csv_to_sqlite(
                 "source",
                 "title",
                 "company",
-                "category",
+                "search_keyword",
                 "city",
                 "state",
                 "country",
                 "min_experience_years",
                 "max_experience_years",
-                "salary",
                 "skills",
                 "degree_required",
                 "specialization_required",
-                "posted_time",
                 "collected_at",
                 "link",
                 "full_description",
@@ -556,7 +607,7 @@ def sync_csv_to_sqlite(
                     ),
 
                     row.get(
-                        "category",
+                        "search_keyword",
                         "Not Specified",
                     ),
 
@@ -586,11 +637,6 @@ def sync_csv_to_sqlite(
                     ),
 
                     row.get(
-                        "salary",
-                        "Not Specified",
-                    ),
-
-                    row.get(
                         "skills",
                         "Not Specified",
                     ),
@@ -602,11 +648,6 @@ def sync_csv_to_sqlite(
 
                     row.get(
                         "specialization_required",
-                        "Not Specified",
-                    ),
-
-                    row.get(
-                        "posted_time",
                         "Not Specified",
                     ),
 
@@ -633,23 +674,21 @@ def sync_csv_to_sqlite(
                         source,
                         title,
                         company,
-                        category,
+                        search_keyword,
                         city,
                         state,
                         country,
                         min_experience_years,
                         max_experience_years,
-                        salary,
                         skills,
                         degree_required,
                         specialization_required,
-                        posted_time,
                         collected_at,
                         link,
                         full_description
                     )
                     VALUES (
-                        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                        ?, ?, ?, ?, ?, ?, ?, ?,
                         ?, ?, ?, ?, ?, ?, ?, ?
                     )
                     ON CONFLICT(job_id)
@@ -657,7 +696,8 @@ def sync_csv_to_sqlite(
                         source = excluded.source,
                         title = excluded.title,
                         company = excluded.company,
-                        category = excluded.category,
+                        search_keyword =
+                            excluded.search_keyword,
                         city = excluded.city,
                         state = excluded.state,
                         country = excluded.country,
@@ -665,14 +705,11 @@ def sync_csv_to_sqlite(
                             excluded.min_experience_years,
                         max_experience_years =
                             excluded.max_experience_years,
-                        salary = excluded.salary,
                         skills = excluded.skills,
                         degree_required =
                             excluded.degree_required,
                         specialization_required =
                             excluded.specialization_required,
-                        posted_time =
-                            excluded.posted_time,
                         collected_at =
                             excluded.collected_at,
                         link = excluded.link,

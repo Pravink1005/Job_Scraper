@@ -30,17 +30,15 @@ CREATE TABLE IF NOT EXISTS jobs (
     source TEXT,
     title TEXT,
     company TEXT,
-    category TEXT,
+    search_keyword TEXT,
     city TEXT,
     state TEXT,
     country TEXT,
     min_experience_years TEXT,
     max_experience_years TEXT,
-    salary TEXT,
     skills TEXT,
     degree_required TEXT,
     specialization_required TEXT,
-    posted_time TEXT,
     collected_at TEXT,
     link TEXT,
     full_description TEXT
@@ -61,6 +59,32 @@ def create_database():
     cursor = connection.cursor()
 
     cursor.execute(CREATE_TABLE_SQL)
+
+    # ============================================================
+    # SCHEMA MIGRATION
+    #
+    # CREATE TABLE IF NOT EXISTS does nothing if jobs.db already
+    # exists from before a schema change (e.g. an older database
+    # that predates the search_keyword column). Add any missing
+    # columns so old databases keep working without the user
+    # needing to delete anything.
+    # ============================================================
+
+    cursor.execute("PRAGMA table_info(jobs)")
+    existing_columns = {row[1] for row in cursor.fetchall()}
+
+    expected_columns = [
+        "job_id", "source", "title", "company", "search_keyword",
+        "city", "state", "country", "min_experience_years",
+        "max_experience_years", "skills", "degree_required",
+        "specialization_required", "collected_at", "link",
+        "full_description",
+    ]
+
+    for column in expected_columns:
+        if column not in existing_columns:
+            print(f"[SQLite] Migrating existing database: adding missing column '{column}'")
+            cursor.execute(f"ALTER TABLE jobs ADD COLUMN {column} TEXT")
 
     connection.commit()
 
@@ -114,17 +138,15 @@ def import_csv_to_database():
                 row.get("source", "Not Specified"),
                 row.get("title", "Not Specified"),
                 row.get("company", "Not Specified"),
-                row.get("category", "Not Specified"),
+                row.get("search_keyword", "Not Specified"),
                 row.get("city", "Not Specified"),
                 row.get("state", "Not Specified"),
                 row.get("country", "Not Specified"),
                 row.get("min_experience_years", "Not Specified"),
                 row.get("max_experience_years", "Not Specified"),
-                row.get("salary", "Not specified"),
                 row.get("skills", "Not specified"),
                 row.get("degree_required", "Not Specified"),
                 row.get("specialization_required", "Not Specified"),
-                row.get("posted_time", "Not Specified"),
                 row.get("collected_at", "Not Specified"),
                 row.get("link", "Not Specified"),
                 row.get("full_description", "Not Specified"),
@@ -137,39 +159,35 @@ def import_csv_to_database():
                     source,
                     title,
                     company,
-                    category,
+                    search_keyword,
                     city,
                     state,
                     country,
                     min_experience_years,
                     max_experience_years,
-                    salary,
                     skills,
                     degree_required,
                     specialization_required,
-                    posted_time,
                     collected_at,
                     link,
                     full_description
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 
                 ON CONFLICT(job_id)
                 DO UPDATE SET
                     source = excluded.source,
                     title = excluded.title,
                     company = excluded.company,
-                    category = excluded.category,
+                    search_keyword = excluded.search_keyword,
                     city = excluded.city,
                     state = excluded.state,
                     country = excluded.country,
                     min_experience_years = excluded.min_experience_years,
                     max_experience_years = excluded.max_experience_years,
-                    salary = excluded.salary,
                     skills = excluded.skills,
                     degree_required = excluded.degree_required,
                     specialization_required = excluded.specialization_required,
-                    posted_time = excluded.posted_time,
                     collected_at = excluded.collected_at,
                     link = excluded.link,
                     full_description = excluded.full_description

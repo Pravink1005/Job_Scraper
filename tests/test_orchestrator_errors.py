@@ -18,7 +18,7 @@ def _linkedin_raw(job_id="linkedin_1"):
         "specialization_required": "Software Engineering",
         "min_experience_years": "2",
         "max_experience_years": "4",
-        "posted_time": "20-09-2026 10:00",
+        "search_keyword": "backend engineer",
         "collected_at": "2026-09-20T10:00:00",
     }
 
@@ -30,11 +30,10 @@ def _naukri_raw(url="https://www.naukri.com/job/1"):
         "company": "Acme",
         "location": "Bengaluru",
         "experience": "2-4 Yrs",
-        "salary": "Not disclosed",
         "skills": "SQL; Excel",
         "qualifications_education_required": "Any Graduate",
         "job_description_summary": "Analyze data.",
-        "posted": "20/09/2026 00:00:00",
+        "search_keyword": "data analyst",
     }
 
 

@@ -1438,22 +1438,6 @@ def _extract_experience_range(
 
 
 # ============================================================
-# POSTED TIME NORMALIZATION
-# ============================================================
-
-def _clean_posted_time(
-    value: Any,
-) -> str:
-
-    text = _clean(value)
-
-    if not text:
-        return NOT_SPECIFIED
-
-    return text
-
-
-# ============================================================
 # JOB ID FALLBACK
 # ============================================================
 
@@ -1530,6 +1514,53 @@ def _fallback_job_id(
 
 
 # ============================================================
+# SKILLS FROM FREE TEXT
+# ============================================================
+
+_SKILLS_LABEL_PATTERN = re.compile(
+    r"(?:preferred|required|key|desired|must[\s-]?have)?"
+    r"\s*skills?\s*[:\-]\s*(.+)",
+    re.IGNORECASE,
+)
+
+
+def _extract_skills_from_text(
+    text: str,
+) -> str:
+    """
+    Best-effort fallback: pull a skills list out of free text
+    like "Preferred Skills: Python, SQL, Power BI" when the
+    scraper couldn't find a dedicated skills element on the
+    job card.
+    """
+
+    text = _clean(text)
+
+    if not text:
+        return NOT_SPECIFIED
+
+    match = _SKILLS_LABEL_PATTERN.search(
+        text
+    )
+
+    if not match:
+        return NOT_SPECIFIED
+
+    extracted = match.group(1).strip()
+
+    # Stop at the first line break or sentence-ending period
+    # followed by a capital letter, so we don't swallow the
+    # rest of an unrelated paragraph.
+    extracted = re.split(
+        r"[\n\r]|\.\s+(?=[A-Z])",
+        extracted,
+        maxsplit=1,
+    )[0].strip(" .")
+
+    return extracted or NOT_SPECIFIED
+
+
+# ============================================================
 # COMMON FIELD EXTRACTION
 # ============================================================
 
@@ -1539,7 +1570,9 @@ def _extract_common_fields(
     """
     Extract common fields before creating UnifiedJob.
 
-    Category and salary are intentionally disabled.
+    search_keyword carries the keyword that was searched for
+    when this job was found (e.g. "data analyst"), so the
+    unified dataset can be filtered/grouped by search term.
 
     Experience is extracted primarily from full_description.
     """
@@ -1567,10 +1600,20 @@ def _extract_common_fields(
     )
 
     # --------------------------------------------------------
-    # CATEGORY DISABLED
+    # SEARCH KEYWORD
+    #
+    # The keyword that produced this job (e.g. "data analyst"),
+    # attached by the scraper/orchestrator adaptation step.
     # --------------------------------------------------------
 
-    category = NOT_SPECIFIED
+    search_keyword = _first_value(
+        raw_job,
+        "search_keyword",
+        "search_keywords",
+        "keyword",
+        "query",
+        default=NOT_SPECIFIED,
+    )
 
     job_id = _first_value(
         raw_job,
@@ -1586,12 +1629,6 @@ def _extract_common_fields(
             source,
             raw_job,
         )
-
-    # --------------------------------------------------------
-    # SALARY DISABLED
-    # --------------------------------------------------------
-
-    salary = NOT_SPECIFIED
 
     skills = _first_value(
         raw_job,
@@ -1617,16 +1654,6 @@ def _extract_common_fields(
         "specialization_required",
         "specialization",
         default=NOT_SPECIFIED,
-    )
-
-    posted_time = _clean_posted_time(
-        _first_value(
-            raw_job,
-            "posted_time",
-            "posted_date",
-            "Posted Date",
-            default="",
-        )
     )
 
     collected_at = _first_value(
@@ -1676,15 +1703,33 @@ def _extract_common_fields(
         )
     )
 
+    # --------------------------------------------------------
+    # SKILLS FALLBACK
+    #
+    # The scraper reads skills from dedicated "skill chip"
+    # elements on the job card. Not every posting renders
+    # skills that way — some only mention them inline in the
+    # description (e.g. "Preferred Skills: Python, SQL").
+    # When the structured extraction found nothing, fall back
+    # to pulling them out of the description text.
+    # --------------------------------------------------------
+
+    if skills == NOT_SPECIFIED:
+
+        skills = _extract_skills_from_text(
+            full_description
+        )
+
     return {
         "job_id": job_id,
         "source": _not_specified(source),
         "title": _not_specified(title),
         "company": _not_specified(company),
-        "category": category,
+        "search_keyword": _not_specified(
+            search_keyword
+        ),
         "min_experience_years": minimum,
         "max_experience_years": maximum,
-        "salary": salary,
         "skills": _not_specified(skills),
         "degree_required": degree_required,
         "specialization_required": (
@@ -1692,7 +1737,6 @@ def _extract_common_fields(
                 specialization_required
             )
         ),
-        "posted_time": posted_time,
         "collected_at": _not_specified(
             collected_at
         ),
@@ -1739,8 +1783,8 @@ def normalize_linkedin_job(
             "company"
         ],
 
-        category=fields[
-            "category"
+        search_keyword=fields[
+            "search_keyword"
         ],
 
         city=city,
@@ -1757,10 +1801,6 @@ def normalize_linkedin_job(
             "max_experience_years"
         ],
 
-        salary=fields[
-            "salary"
-        ],
-
         skills=fields[
             "skills"
         ],
@@ -1771,10 +1811,6 @@ def normalize_linkedin_job(
 
         specialization_required=fields[
             "specialization_required"
-        ],
-
-        posted_time=fields[
-            "posted_time"
         ],
 
         collected_at=fields[
@@ -1825,8 +1861,8 @@ def normalize_naukri_job(
             "company"
         ],
 
-        category=fields[
-            "category"
+        search_keyword=fields[
+            "search_keyword"
         ],
 
         city=city,
@@ -1843,10 +1879,6 @@ def normalize_naukri_job(
             "max_experience_years"
         ],
 
-        salary=fields[
-            "salary"
-        ],
-
         skills=fields[
             "skills"
         ],
@@ -1857,10 +1889,6 @@ def normalize_naukri_job(
 
         specialization_required=fields[
             "specialization_required"
-        ],
-
-        posted_time=fields[
-            "posted_time"
         ],
 
         collected_at=fields[
@@ -1931,8 +1959,8 @@ def normalize(
             "company"
         ],
 
-        category=fields[
-            "category"
+        search_keyword=fields[
+            "search_keyword"
         ],
 
         city=city,
@@ -1949,10 +1977,6 @@ def normalize(
             "max_experience_years"
         ],
 
-        salary=fields[
-            "salary"
-        ],
-
         skills=fields[
             "skills"
         ],
@@ -1963,10 +1987,6 @@ def normalize(
 
         specialization_required=fields[
             "specialization_required"
-        ],
-
-        posted_time=fields[
-            "posted_time"
         ],
 
         collected_at=fields[
@@ -2725,11 +2745,7 @@ def _run_full_tests():
     )
 
     print(
-        f"  Category: {job.category}"
-    )
-
-    print(
-        f"  Salary  : {job.salary}"
+        f"  Keyword : {job.search_keyword}"
     )
 
     _assert_equal(
@@ -2765,15 +2781,9 @@ def _run_full_tests():
     )
 
     _assert_equal(
-        job.category,
+        job.search_keyword,
         NOT_SPECIFIED,
-        "LinkedIn category disabled",
-    )
-
-    _assert_equal(
-        job.salary,
-        NOT_SPECIFIED,
-        "LinkedIn salary disabled",
+        "LinkedIn search_keyword defaults to Not Specified when absent",
     )
 
     # --------------------------------------------------------
@@ -2941,11 +2951,7 @@ def _run_full_tests():
     )
 
     print(
-        f"  Category: {naukri_job.category}"
-    )
-
-    print(
-        f"  Salary  : {naukri_job.salary}"
+        f"  Keyword : {naukri_job.search_keyword}"
     )
 
     _assert_equal(
@@ -2969,15 +2975,9 @@ def _run_full_tests():
     )
 
     _assert_equal(
-        naukri_job.category,
+        naukri_job.search_keyword,
         NOT_SPECIFIED,
-        "Naukri category disabled",
-    )
-
-    _assert_equal(
-        naukri_job.salary,
-        NOT_SPECIFIED,
-        "Naukri salary disabled",
+        "Naukri search_keyword defaults to Not Specified when absent",
     )
 
     # --------------------------------------------------------

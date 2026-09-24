@@ -93,7 +93,7 @@ flowchart TD
 
 ### ✅ Quality Control
 Built-in audit that checks for:
-- Correct CSV structure (18 columns)
+- Correct CSV structure (16 columns)
 - Duplicate job IDs
 - Missing required fields
 - Invalid/contaminated location or education data
@@ -142,7 +142,7 @@ Job_Scraper/
 
 ## 📊 Output Schema
 
-Every job, no matter the source, is saved with these **18 columns**:
+Every job, no matter the source, is saved with these **16 columns**:
 
 | Column | Description |
 |---|---|
@@ -150,17 +150,15 @@ Every job, no matter the source, is saved with these **18 columns**:
 | `source` | Where it came from — `linkedin` or `naukri` |
 | `title` | Job title |
 | `company` | Company name |
-| `category` | Job category *(currently always "Not Specified")* |
+| `search_keyword` | The search keyword that found this job (e.g. `data analyst`) |
 | `city` | Normalized city |
 | `state` | Normalized state |
 | `country` | Country |
 | `min_experience_years` | Minimum experience required |
 | `max_experience_years` | Maximum experience required |
-| `salary` | Salary *(currently always "Not Specified")* |
 | `skills` | Extracted skills |
 | `degree_required` | Required degree (ML-enriched if missing) |
 | `specialization_required` | Required specialization (ML-enriched if missing) |
-| `posted_time` | When the job was originally posted |
 | `collected_at` | When the pipeline scraped it |
 | `link` | Original job posting URL |
 | `full_description` | Full job description text |
