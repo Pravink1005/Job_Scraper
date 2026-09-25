@@ -122,9 +122,9 @@ def _bool(env_value, default):
 # Both LinkedIn and Naukri will use the same keywords.
 # ============================================================================
 
-DEFAULT_SEARCH_KEYWORDS = [
-    "Python developer","python engineer","python backend developer","python backend engineer",
-]
+#DEFAULT_SEARCH_KEYWORDS = ["Python developer","python engineer","python backend developer","python backend engineer"]
+#DEFAULT_SEARCH_KEYWORDS = ["data analyst","business data analyst","data engineer","ETL developer"]
+DEFAULT_SEARCH_KEYWORDS = ["java developer","java software engineer","java backend developer","java full stack developer"]
 
 # Environment variable priority:
 #
