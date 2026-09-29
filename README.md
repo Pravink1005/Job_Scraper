@@ -248,7 +248,7 @@ PIPELINE_OUTPUT_DIR=csv_output
 LINKEDIN_LOCATION=India
 LINKEDIN_MAX_JOBS_PER_KEYWORD=100
 LINKEDIN_JOBS_PER_PAGE=25
-LINKEDIN_MAX_AGE_HOURS=1
+LINKEDIN_MAX_AGE_HOURS=4
 NAUKRI_MAX_PAGES=5
 NAUKRI_MAX_JOBS=100
 NAUKRI_MAX_TOTAL=
@@ -270,6 +270,24 @@ python main.py --source both
 
 This runs the full flow: **LinkedIn → Naukri → Normalize → Validate → ML Enrich → Deduplicate → CSV → SQLite**
 
+### Every-four-hour collection
+
+Run the pipeline every four hours with:
+
+```powershell
+python main.py --source both --linkedin-max-age-hours 4
+```
+
+The pipeline loads job IDs from both `csv_output/seen_job_ids.json` and
+`unified_jobs.csv`. A job whose `job_id` was already saved is skipped, so an
+older posting found again by a scraper is not written a second time. The JSON
+file is a persistent deduplication cache, not a second job dataset. The CSV is
+also used as a fallback if the JSON file is missing or corrupt.
+
+On Windows, create a Task Scheduler task that runs this command every 4 hours.
+Set the task's **Start in** directory to the project folder so `csv_output`
+resolves correctly.
+
 ---
 
 ## 🎛️ Command-Line Options
@@ -281,7 +299,7 @@ This runs the full flow: **LinkedIn → Naukri → Normalize → Validate → ML
 | `--rebuild-output` | Rebuilds the dataset (use carefully!) |
 | `--no-enrichment` | Skips ML enrichment |
 | `--linkedin-max-jobs 5` | Max jobs per keyword on LinkedIn |
-| `--linkedin-max-age-hours 1` | Only accept LinkedIn jobs posted this recently |
+| `--linkedin-max-age-hours 4` | Only accept LinkedIn jobs posted this recently |
 | `--naukri-max-pages 5` | Max pages to scrape on Naukri |
 | `--naukri-max-jobs 20` | Max jobs to collect on Naukri |
 | `--naukri-headless` | Run the Naukri browser headlessly |
@@ -323,6 +341,10 @@ A healthy audit looks like a long list of `[PASS]` lines with `0` problems found
 ## 🗄️ SQLite Database
 
 The pipeline automatically syncs your CSV into `csv_output/jobs.db` at the end of every run — you normally don't need to do anything manually.
+
+SQLite uses `job_id` as its primary key. Each sync updates existing IDs and
+removes database rows that are no longer present in the CSV, so the database
+mirrors the current CSV instead of accumulating stale rows.
 
 If you ever need to manually rebuild it from the CSV:
 ```bash

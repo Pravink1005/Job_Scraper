@@ -123,8 +123,8 @@ def _bool(env_value, default):
 # ============================================================================
 
 #DEFAULT_SEARCH_KEYWORDS = ["Python developer","python engineer","python backend developer","python backend engineer"]
-#DEFAULT_SEARCH_KEYWORDS = ["data analyst","business data analyst","data engineer","ETL developer"]
-DEFAULT_SEARCH_KEYWORDS = ["java developer","java software engineer","java backend developer","java full stack developer"]
+DEFAULT_SEARCH_KEYWORDS = ["data analyst","business data analyst","data engineer","ETL developer"]
+#DEFAULT_SEARCH_KEYWORDS = ["java developer","java software engineer","java backend developer","java full stack developer"]
 
 # Environment variable priority:
 #
@@ -178,7 +178,7 @@ LINKEDIN_JOBS_PER_PAGE = _int(
 
 LINKEDIN_MAX_AGE_HOURS = _int(
     os.getenv("LINKEDIN_MAX_AGE_HOURS"),
-    1
+    4
 )
 
 

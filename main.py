@@ -536,6 +536,13 @@ def sync_csv_to_sqlite(
         processed = 0
         skipped = 0
 
+        # Keep SQLite aligned with the CSV, which is the pipeline's
+        # source of truth. The temporary table also handles an empty
+        # CSV without relying on a large NOT IN parameter list.
+        cursor.execute(
+            "CREATE TEMP TABLE sync_job_ids (job_id TEXT PRIMARY KEY)"
+        )
+
         with open(
             csv_path,
             "r",
@@ -596,6 +603,11 @@ def sync_csv_to_sqlite(
                     skipped += 1
 
                     continue
+
+                cursor.execute(
+                    "INSERT OR IGNORE INTO sync_job_ids (job_id) VALUES (?)",
+                    (job_id,),
+                )
 
                 values = (
                     job_id,
@@ -729,6 +741,17 @@ def sync_csv_to_sqlite(
                 )
 
                 processed += 1
+
+        cursor.execute(
+            """
+            DELETE FROM jobs
+            WHERE NOT EXISTS (
+                SELECT 1
+                FROM sync_job_ids
+                WHERE sync_job_ids.job_id = jobs.job_id
+            )
+            """
+        )
 
         connection.commit()
 

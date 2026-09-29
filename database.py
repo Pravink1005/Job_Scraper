@@ -116,6 +116,10 @@ def import_csv_to_database():
     updated = 0
     skipped = 0
 
+    cursor.execute(
+        "CREATE TEMP TABLE sync_job_ids (job_id TEXT PRIMARY KEY)"
+    )
+
     with open(
         CSV_PATH,
         "r",
@@ -132,6 +136,11 @@ def import_csv_to_database():
             if not job_id:
                 skipped += 1
                 continue
+
+            cursor.execute(
+                "INSERT OR IGNORE INTO sync_job_ids (job_id) VALUES (?)",
+                (job_id,),
+            )
 
             values = (
                 job_id,
@@ -199,6 +208,17 @@ def import_csv_to_database():
                 inserted += 1
             else:
                 updated += 1
+
+    cursor.execute(
+        """
+        DELETE FROM jobs
+        WHERE NOT EXISTS (
+            SELECT 1
+            FROM sync_job_ids
+            WHERE sync_job_ids.job_id = jobs.job_id
+        )
+        """
+    )
 
     connection.commit()
 
